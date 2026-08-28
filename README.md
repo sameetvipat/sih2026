@@ -151,7 +151,7 @@ measures how well the model learned your assumptions, not how well it works.
 Every headline number in this project from synthetic data should be read that
 way.
 
-## Training on real dispositions, and the cadence trap
+## Training on real dispositions, and where the model actually fails
 
 `scripts/fetch_labels.py` pulls **8071 labelled targets** from two public
 catalogues, neither of which depends on anyone providing us data:
@@ -168,7 +168,7 @@ match) to `blend`, `nt` (not transit-like) to `variable`. Only unambiguous flag
 combinations are accepted — an object flagged both `ss` and `co` could be
 either, and including it would teach the model noise.
 
-`scripts/compare_domains.py` then trains on each source and tests on real data:
+`scripts/compare_domains.py` trains on each source and tests on real data:
 
 | experiment | accuracy | macro F1 |
 |---|---|---|
@@ -177,38 +177,64 @@ either, and including it would teach the model noise.
 | real -> real | 0.433 | 0.418 |
 | synthetic + real -> real | 0.450 | 0.456 |
 
-A 57-point collapse — and training on real labels recovers almost none of it
-(+1.7 points). That second number is the important one: if the gap were simply
-that the simulator draws from the wrong distribution, real labels would fix it.
-They do not, so something more basic is wrong.
+A 57-point collapse, and training on real labels recovers almost none of it
+(+1.7 points). **0.984 is not this pipeline's accuracy. 0.42 is closer to the
+truth, and even that is measured on only 170 real light curves.**
 
-**Every feature collapses, not just the shape ones.** Comparing how well each
-feature separates the four classes (one-way F statistic) in each domain:
+### Ruling out the obvious explanation
 
-| feature | F (synthetic) | F (real) | ratio |
+The natural suspect was sampling. Kepler long cadence is 29 minutes against
+TESS's 2, so a 3-hour transit is sampled 6 times instead of 90 and its ingress
+is a single point. Since the model was trained at 2 minutes and tested at 29,
+that looked like the whole story.
+
+It is not. `generate_sample` takes `cadence_min` and `n_days`, so the
+experiment can be run properly — synthetic data generated at Kepler's exact
+cadence and baseline, then tested on Kepler:
+
+| training set | synthetic self-test | -> real | gap |
 |---|---|---|---|
-| `log_duration_hr` | 653.2 | 0.8 | 0.001 |
-| `log_rho_implied` | 699.1 | 0.9 | 0.001 |
-| `depth_consistency` | 151.8 | 0.4 | 0.003 |
-| `sde` | 685.7 | 7.1 | 0.010 |
-| `log_depth` | 727.5 | 24.8 | 0.034 |
-| `trap_t23_t14` | 175.2 | 6.8 | 0.039 |
+| 2-min cadence (mismatched) | 0.984 | 0.417 | **0.568** |
+| 29-min cadence (matched) | 0.948 | 0.383 | **0.565** |
 
-The cause is sampling, not astrophysics. **Kepler long cadence is 29 minutes
-against TESS's 2**, so a 3-hour transit is sampled 6 times instead of 90 and its
-ingress is a single point. Duration becomes quantised to the cadence, the
-trapezoid shape fit has nothing to fit, and implied stellar density — which is
-computed *from* the duration — inherits the damage.
+Matching the cadence closed **none** of the gap. Comparing class separation
+(one-way F statistic) across all three sets shows why: 82% of features keep
+more than 30% of their separating power at 29-minute cadence on synthetic data,
+and the median real-to-synthetic F ratio *at identical cadence* is **0.047**.
 
-So the synthetic-to-real comparison above is **confounded**: it measures
-simulation realism and a 14x sampling mismatch at the same time, and cannot
-separate them. `generate_sample` now takes `cadence_min` and `n_days` so a
-synthetic set can be matched to whatever real data it will be tested against,
-which is the controlled version of the experiment.
+| feature | syn 2-min | syn 29-min | real 29-min |
+|---|---|---|---|
+| `log_depth` | 727.5 | 662.2 | 24.8 |
+| `sde` | 685.7 | 374.6 | 7.1 |
+| `log_snr` | 371.3 | 307.5 | 31.9 |
+| `log_rho_implied` | 699.1 | 115.5 | 0.9 |
+| `log_duration_hr` | 653.2 | 95.7 | 0.8 |
+| `trap_t23_t14` | 175.2 | 31.6 | 6.8 |
 
-**The transferable lesson:** these vetting features are cadence-dependent, and a
-model trained at one cadence should not be assumed to work at another. Any claim
-about accuracy has to state the cadence it was measured at.
+Coarse sampling does specifically damage the three features derived from
+transit duration and shape — `log_rho_implied`, `log_duration_hr` and
+`trap_t23_t14` lose most of their power, exactly as the ingress argument
+predicts. But that is a secondary effect. Features like `log_depth` and `sde`
+sail through the cadence change (727 -> 662, 686 -> 375) and still collapse on
+real data (24.8, 7.1).
+
+**So the gap is simulator realism, not sampling.** Real light curves carry
+correlated instrumental systematics, stellar variability with structure our
+four-sinusoid red-noise model does not reproduce, and genuine astrophysical
+diversity within each class. The generator produces light curves that are too
+clean, and a model trained on them learns a problem that is easier than the
+real one.
+
+### What this means for the project
+
+- Report 0.42, not 0.98. The synthetic number measures how well the model
+  learned our assumptions.
+- The honest path to a better classifier is more real labelled data, not a
+  better simulator. 8071 labelled targets are available; only 240 have been
+  processed so far, and `real -> real` trains on just 110 rows.
+- Simulation still earns its place for *parameter recovery*, where the injected
+  truth is known exactly and the physics (Mandel-Agol) is not an approximation.
+  It is classification transfer that it fails at.
 
 ## Validation on real TESS data
 
