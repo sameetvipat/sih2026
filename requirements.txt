@@ -1,0 +1,29 @@
+# --- core scientific stack ---
+numpy>=1.26
+scipy>=1.11
+pandas>=2.1
+matplotlib>=3.8
+
+# --- astronomy ---
+astropy>=6.0
+lightkurve>=2.4          # TESS/Kepler light curve I/O + MAST access
+astroquery>=0.4.7        # TOI / KOI catalog queries
+wotan>=1.10              # transit-safe detrending (biweight)
+batman-package>=2.4.9    # Mandel-Agol analytic transit model
+
+# --- machine learning ---
+scikit-learn>=1.4
+lightgbm>=4.3
+
+# --- inference / uncertainties ---
+emcee>=3.1
+corner>=2.2
+
+# --- app + tooling ---
+tqdm>=4.66
+pytest>=8.0
+httpx2>=2.12          # required by fastapi TestClient
+
+# --- web API ---
+fastapi>=0.110
+uvicorn[standard]>=0.27

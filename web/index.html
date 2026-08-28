@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exoplanet Transit Detection</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/vendor/plotly.min.js"></script>
+</head>
+<body>
+
+<header>
+  <h1>Exoplanet Transit Detection</h1>
+  <span class="sub">BLS search &rarr; vetting features &rarr; calibrated classifier &rarr; transit fit</span>
+  <span class="spacer"></span>
+  <span class="pill" id="clsPill">checking&hellip;</span>
+  <span class="pill" id="warmPill">cache 0</span>
+</header>
+
+<div class="wrap">
+  <aside>
+    <div class="sec">
+      <h2>Real TESS targets</h2>
+      <div id="realList"></div>
+    </div>
+
+    <div class="sec">
+      <h2>Simulated</h2>
+      <div id="simList"></div>
+      <div class="opt" style="margin-top:8px">
+        <label for="seed" style="color:var(--muted);font-size:12px">seed</label>
+        <input type="text" id="seed" value="42" style="width:70px">
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>Download by TIC</h2>
+      <input type="text" id="ticInput" placeholder="e.g. 261136679">
+      <button class="run" id="ticBtn" style="margin-top:8px">Fetch from MAST</button>
+    </div>
+
+    <div class="sec">
+      <h2>Options</h2>
+      <label class="opt"><input type="checkbox" id="mcmc" checked> MCMC uncertainties</label>
+      <label class="opt"><input type="checkbox" id="multi" checked> Try multiple detrenders</label>
+      <button class="run" id="runBtn">Analyse</button>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div class="empty">Select a target to analyse.</div>
+  </main>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

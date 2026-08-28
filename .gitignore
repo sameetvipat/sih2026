@@ -1,0 +1,26 @@
+# --- python ---
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# --- intermediate dataset shards -------------------------------------------
+# These are the crash-recovery buffers for make_dataset.py and
+# build_real_dataset.py. The merged .parquet files next to them hold the same
+# rows, so committing both would duplicate the data.
+data/processed/shards/
+data/processed/real_shards/
+*.parquet.tmp
+
+# --- caches ---
+.DS_Store
+reports/*.png
+reports/*.csv
+
+# --- committed on purpose (do NOT ignore) -----------------------------------
+# data/cache/*.npz          real light curves, so the demo runs offline
+# data/processed/*.parquet  feature tables, ~35 min to regenerate
+# models/classifier.joblib  trained model, so the demo runs immediately
+# web/vendor/plotly.min.js  vendored so a CDN outage cannot break a live demo
