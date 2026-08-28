@@ -239,3 +239,124 @@ def generate_sample(label: str, rng: np.random.Generator,
 
     return dict(time=t, flux=flux, flux_err=flux_err, label=label,
                 white_ppm=white_ppm, red_ppm=red_ppm, truth=truth)
+
+# --------------------------------------------------------------------------- #
+# Injection into real stellar backgrounds
+# --------------------------------------------------------------------------- #
+# A controlled experiment showed the classifier's synthetic-to-real accuracy gap
+# is not explained by cadence: regenerating synthetic data at the target cadence
+# left the gap unchanged (0.565 vs 0.568), 82% of features stayed cadence-robust
+# on synthetic data, and the median real/synthetic feature-separation ratio at
+# matched cadence was 0.047.  The noise model above -- white noise plus four
+# low-frequency sinusoids -- is simply too clean next to real instrumental
+# systematics and real stellar variability, and no amount of amplitude tuning
+# closes a 20x gap.
+#
+# So rather than simulate a realistic noise floor, borrow one: inject
+# known-truth signals onto real quiet stars.  This is how injection-recovery
+# testing is done in the exoplanet literature, and it keeps exact ground truth.
+
+MIN_TRANSIT_COVERAGE = 0.6      # fraction of the in-transit window that must
+                                # actually contain data points
+MAX_T0_REDRAWS = 12
+
+
+def _event_coverage(t: np.ndarray, truth: dict) -> float:
+    """Fraction of the injected in-transit windows that actually holds samples.
+
+    Real light curves have downlink gaps and flare-clipped stretches.  If an
+    injected transit lands inside one, the example carries a label for a signal
+    largely absent from the data -- a malformed training row.
+
+    Coverage is computed from the known ephemeris rather than from the model
+    array: every predicted event window is compared against how many samples
+    really fall inside it.  (Thresholding the model array instead looks
+    reasonable but silently measures the span from the first event to the last,
+    which reports ~0.01 for a perfectly sampled signal.)
+    """
+    period = truth.get("period")
+    duration = truth.get("duration")
+    t0 = truth.get("t0")
+    if not all(np.isfinite(v) for v in (period, duration, t0) if v is not None):
+        return 0.0
+    if period is None or duration is None or t0 is None or period <= 0 or duration <= 0:
+        return 0.0
+
+    cadence = float(np.median(np.diff(t)))
+    if cadence <= 0:
+        return 0.0
+
+    lo, hi = float(t.min()), float(t.max())
+    k0 = int(np.floor((lo - t0) / period)) - 1
+    k1 = int(np.ceil((hi - t0) / period)) + 1
+
+    got = expected = 0.0
+    for k in range(k0, k1 + 1):
+        centre = t0 + k * period
+        a, b = centre - duration / 2.0, centre + duration / 2.0
+        if b < lo or a > hi:
+            continue                      # event falls outside the observation
+        # clip to the observed span so partial events at the edges are fair
+        a_c, b_c = max(a, lo), min(b, hi)
+        expected += (b_c - a_c) / cadence
+        got += float(np.count_nonzero((t >= a_c) & (t <= b_c)))
+
+    if expected < 1.0:
+        return 0.0
+    return float(min(got / expected, 1.0))
+
+
+def inject_into_real(baseline_time, baseline_flux, baseline_flux_err,
+                     label: str, rng: np.random.Generator,
+                     min_coverage: float = MIN_TRANSIT_COVERAGE) -> dict:
+    """Inject a known-truth signal onto a real, signal-free light curve.
+
+    Drop-in alternative to `generate_sample` for TRANSIT / ECLIPSE / BLEND,
+    returning the same dict schema.
+
+    `baseline_flux` MUST be raw -- neither normalised nor detrended.  The
+    combined array is returned raw too, so the caller passes it through the same
+    `prepare()` that live queries use.  Injecting onto already-cleaned flux
+    would train the model on data whose messy parts were removed by a process
+    inference does not replicate, which silently inflates accuracy.
+
+    The signal is applied multiplicatively: a transit blocks a fraction of the
+    star's light, so it scales with the real flux including its variations,
+    rather than being added as a fixed offset.
+    """
+    t = np.asarray(baseline_time, dtype=float)
+    f = np.asarray(baseline_flux, dtype=float)
+    e = (np.asarray(baseline_flux_err, dtype=float)
+         if baseline_flux_err is not None and np.size(baseline_flux_err) else None)
+
+    dilution = 0.0
+    for attempt in range(MAX_T0_REDRAWS):
+        if label == TRANSIT:
+            model, truth = sim_transit(t, rng)
+        elif label == ECLIPSE:
+            model, truth = sim_eclipse(t, rng, dilution=0.0)
+        elif label == BLEND:
+            # Third light from a neighbour in the aperture. Diluting the
+            # multiplicative model is algebraically identical to diluting the
+            # combined array -- (F*M + c*F)/(1+c) == F*(M+c)/(1+c) -- but stays
+            # dimensionally sound, since c is a flux ratio and F is raw counts.
+            dilution = float(rng.uniform(5.0, 60.0))
+            model, truth = sim_eclipse(t, rng, dilution=dilution)
+        else:
+            raise ValueError(
+                f"inject_into_real handles TRANSIT/ECLIPSE/BLEND, not {label!r}; "
+                "VARIABLE and NOISE are sourced from real data directly")
+
+        if _event_coverage(t, truth) >= min_coverage:
+            break
+        # otherwise the event fell in a gap -- redraw the ephemeris
+    else:
+        truth["low_coverage"] = True
+
+    flux = f * model
+
+    return dict(time=t, flux=flux, flux_err=e, label=label,
+                white_ppm=np.nan, red_ppm=np.nan,
+                truth={**truth, "injected_on_real": True,
+                       "dilution": dilution,
+                       "coverage": _event_coverage(t, truth)})

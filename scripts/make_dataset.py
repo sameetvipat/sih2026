@@ -24,19 +24,79 @@ from tqdm import tqdm
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from exodet.config import CLASSES, NOISE, VARIABLE   # noqa: E402
+from exodet.config import (BLEND, CLASSES, ECLIPSE, NOISE,   # noqa: E402
+                            TRANSIT, VARIABLE)
 from exodet.pipeline import analyze                  # noqa: E402
-from exodet.simulate import generate_sample          # noqa: E402
+from exodet.simulate import generate_sample, inject_into_real   # noqa: E402
+
+# Classes that can be created by injecting a known signal. VARIABLE and NOISE
+# are deliberately not here -- see `_load_baseline` and the module docstring.
+INJECTABLE = (TRANSIT, ECLIPSE, BLEND)
+
+_BASELINES: pd.DataFrame | None = None
+
+
+def _baseline_pool(manifest: str) -> pd.DataFrame:
+    """Load the quiet-baseline manifest once per worker process."""
+    global _BASELINES
+    if _BASELINES is None:
+        _BASELINES = pd.read_csv(manifest)
+        if "split" not in _BASELINES:
+            _BASELINES["split"] = "train"
+    return _BASELINES
+
+
+def _load_baseline(manifest: str, seed: int, split: str | None):
+    """Draw a raw baseline, stratified across brightness bins.
+
+    Stratification matters: always drawing from the brightest, cleanest stars
+    would reintroduce an unrealistically easy noise floor from a different
+    angle, which is the exact failure this pipeline exists to fix.
+    """
+    pool = _baseline_pool(manifest)
+    if split:
+        pool = pool[pool["split"] == split]
+    if pool.empty:
+        return None
+    rng = np.random.default_rng(seed)
+    # pick a brightness stratum first, then a star within it, so faint stars
+    # are not swamped by however many bright ones happen to be in the bank
+    bins = sorted(pool["brightness_bin"].dropna().unique())
+    if bins:
+        b = bins[rng.integers(0, len(bins))]
+        sub = pool[pool["brightness_bin"] == b]
+        pool = sub if len(sub) else pool
+    row = pool.iloc[int(rng.integers(0, len(pool)))]
+    d = np.load(row["path"], allow_pickle=True)
+    err = d["flux_err"] if "flux_err" in d and d["flux_err"].size else None
+    return (np.asarray(d["time"], float), np.asarray(d["flux"], float),
+            err, str(row["target"]))
 
 FLUSH_EVERY = 100
 
 
 def one_sample(args) -> dict | None:
-    """Simulate + process a single light curve. Returns a feature row."""
-    label, seed, cadence, days = args
+    """Build + process a single light curve. Returns a feature row."""
+    label, seed, cadence, days, source, manifest, split = args
     rng = np.random.default_rng(seed)
+    baseline_target = None
     try:
-        s = generate_sample(label, rng, cadence_min=cadence, n_days=days)
+        if source == "real_injected":
+            got = _load_baseline(manifest, seed, split)
+            if got is None:
+                return None
+            bt, bf, be, baseline_target = got
+            if label in INJECTABLE:
+                s = inject_into_real(bt, bf, be, label, rng)
+            else:
+                # VARIABLE and NOISE are not injected. A real quiet star with
+                # nothing added is already a genuine NOISE example whenever the
+                # full pipeline false-alarms on it; injecting a fake wobble
+                # would just re-import the synthetic realism problem.
+                s = dict(time=bt, flux=bf, flux_err=be, label=label,
+                         white_ppm=np.nan, red_ppm=np.nan, truth={})
+        else:
+            s = generate_sample(label, rng, cadence_min=cadence, n_days=days)
         # Go through the same entry point inference uses, so training features
         # and serving features come from identical preprocessing.  (The
         # two-pass masked detrend recovers ~20% of transit depth, so computing
@@ -60,6 +120,8 @@ def one_sample(args) -> dict | None:
         row["bls_duration"] = det.duration
         row["white_ppm"] = s["white_ppm"]
         row["cadence_min"] = cadence
+        row["source"] = source
+        row["baseline_target"] = baseline_target
         return row
     except Exception as exc:                      # keep the batch alive
         print(f"[warn] seed={seed} label={label}: {exc}", file=sys.stderr)
@@ -86,6 +148,16 @@ def main():
     ap.add_argument("-o", "--out", default="data/processed/train.parquet")
     ap.add_argument("-j", "--jobs", type=int, default=os.cpu_count())
     ap.add_argument("--seed", type=int, default=2026)
+    ap.add_argument("--source", choices=["synthetic", "real_injected"],
+                    default="real_injected",
+                    help="real_injected puts known signals on real quiet stars; "
+                         "synthetic uses the purely simulated noise model, which "
+                         "is retained for validating the fitting code, not for "
+                         "training the classifier")
+    ap.add_argument("--manifest", default="data/baselines/manifest.csv")
+    ap.add_argument("--split", default=None,
+                    help="restrict to baselines in this split (train/test), so "
+                         "the same star's noise floor never spans both")
     ap.add_argument("--cadence", type=float, default=2.0,
                     help="sampling cadence in minutes (2 = TESS, 29 = Kepler long)")
     ap.add_argument("--days", type=float, default=27.4,
@@ -116,8 +188,28 @@ def main():
     # detected far less often (they mostly aren't periodic dips), so oversample
     # them at generation time to keep the surviving rows roughly balanced.
     yield_factor = {NOISE: 3, VARIABLE: 2}
-    tasks = [(label, args.seed + i * 1000 + k, args.cadence, args.days)
-             for k, label in enumerate(CLASSES)
+    if args.source == "real_injected" and not os.path.exists(args.manifest):
+        sys.exit(
+            f"no baseline manifest at {args.manifest}.\n"
+            "real_injected mode needs a bank of real quiet stars to inject into:\n"
+            "  python scripts/build_baseline_bank.py --mission kepler\n"
+            "  python scripts/split_baselines.py\n"
+            "Or pass --source synthetic to use the simulated noise model "
+            "(valid for fitting validation, not for training the classifier).")
+
+    classes = CLASSES
+    if args.source == "real_injected":
+        # VARIABLE comes from the catalogued real variables in real.parquet --
+        # a real star with real rotation/pulsation structure, which is exactly
+        # what the synthetic generator fails to reproduce. Merge it at train
+        # time rather than faking it here.
+        classes = [c for c in CLASSES if c != VARIABLE]
+        print("[note] VARIABLE is not generated in real_injected mode; "
+              "merge those rows from data/processed/real.parquet at train time")
+
+    tasks = [(label, args.seed + i * 1000 + k, args.cadence, args.days,
+              args.source, args.manifest, args.split)
+             for k, label in enumerate(classes)
              for i in range(args.n_per_class * yield_factor.get(label, 1))]
 
     if not done.empty:

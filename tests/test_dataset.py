@@ -66,7 +66,10 @@ def test_resume_skips_completed_work(tmp_path):
     out = tmp_path / "train.parquet"
     script = os.path.join(os.path.dirname(__file__), "..", "scripts",
                           "make_dataset.py")
-    cmd = [sys.executable, script, "-n", "1", "-o", str(out), "-j", "2"]
+    # --source synthetic: this test exercises the shard/resume machinery, not
+    # real-background injection, and must not depend on a downloaded baseline bank
+    cmd = [sys.executable, script, "-n", "1", "-o", str(out), "-j", "2",
+           "--source", "synthetic"]
 
     first = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
     assert first.returncode == 0, first.stderr

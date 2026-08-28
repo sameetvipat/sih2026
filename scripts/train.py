@@ -34,6 +34,11 @@ def main():
     ap.add_argument("-d", "--data", default="data/processed/train.parquet")
     ap.add_argument("-o", "--outdir", default="models")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--real", default="data/processed/real.parquet",
+                    help="real-disposition set used for the domain-gap check")
+    ap.add_argument("--gap-threshold", type=float, default=0.30)
+    ap.add_argument("--skip-gap-check", action="store_true",
+                    help="only for exploratory runs; never for a model you report")
     args = ap.parse_args()
 
     df = pd.read_parquet(args.data)
@@ -68,6 +73,27 @@ def main():
     classify.save(model, calibrator, rep, args.outdir)
     print(f"\nsaved -> {args.outdir}/classifier.joblib")
 
+    # The domain-gap check runs as part of training, not as a separate command
+    # somebody has to remember. The original failure -- publishing a 0.984
+    # self-test score while real-world accuracy was ~0.42 -- was caught by a
+    # human running an experiment by hand, and nothing automated would have
+    # flagged it.
+    if not args.skip_gap_check:
+        print()
+        import subprocess
+        rc = subprocess.call([sys.executable,
+                              os.path.join(os.path.dirname(__file__),
+                                           "check_domain_gap.py"),
+                              "--train", args.data,
+                              "--real", args.real,
+                              "--threshold", str(args.gap_threshold)])
+        if rc != 0:
+            print("\n[train] domain-gap check FAILED -- the saved model's "
+                  "self-test score is not a trustworthy accuracy figure.",
+                  file=sys.stderr)
+            return rc
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
