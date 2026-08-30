@@ -327,7 +327,7 @@ brew install uv libomp                  # libomp is required by LightGBM on macO
 uv venv --python 3.12 .venv
 uv pip install -r requirements.txt setuptools
 
-.venv/bin/python -m pytest tests/ -q    # 41 tests, ~5 min
+.venv/bin/python -m pytest tests/ -q    # 62 tests, ~3 min
 .venv/bin/uvicorn api.main:app --reload # then open http://localhost:8000
 ```
 
@@ -422,8 +422,8 @@ web/
   style.css
   vendor/         Plotly vendored locally so a CDN outage
                   cannot break a live demo
-tests/            39 tests: pipeline invariants, API contract,
-                  dataset resumability
+tests/            62 tests: pipeline invariants, API contract,
+                  dataset resumability, real-background injection
 ```
 
 ## API

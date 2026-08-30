@@ -2,6 +2,7 @@
 numpy>=1.26
 scipy>=1.11
 pandas>=2.1
+pyarrow>=15.0            # parquet engine; pandas needs it for every dataset read/write
 matplotlib>=3.8
 
 # --- astronomy ---
