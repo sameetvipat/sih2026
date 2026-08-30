@@ -101,6 +101,79 @@ results rather than crash:
    values for Pi Men c when it was a definitional mismatch. `FitResult` now
    reports both.
 
+## Real-background injection: the result, and why it is inconclusive
+
+The diagnosed cause of the synthetic-to-real collapse was that the simulated
+noise model is too clean. The fix was to stop simulating a noise floor and
+borrow a real one: inject known-truth signals onto 463 real quiet Kepler stars
+(`scripts/build_baseline_bank.py`), vetted so BLS finds nothing in them, and
+stratified across three brightness bins.
+
+**Mission-matching decision:** baselines and evaluation targets are both Kepler.
+This is the mission-matched experiment — "does real-background injection close
+the gap when the injection background matches the target domain?" Cross-mission
+generalisation is a separate question and is not claimed here.
+
+### The numbers
+
+Three injectable classes only (transit / eclipse / blend). VARIABLE is excluded
+from this comparison on purpose: it has no injected counterpart, so it can only
+come from the real training half — 32 rows against ~600 injected. Under
+`class_weight="balanced"` each of those rows carries ~6x the weight of an
+injected one, and the model over-predicts VARIABLE (measured: recall 0.889 at
+precision 0.229). Including it compares two different problems.
+
+| regime | accuracy | macro F1 |
+|---|---|---|
+| pure synthetic, self-test | 0.979 | 0.978 |
+| pure synthetic -> real | 0.435 | 0.421 |
+| real-injected, self-test | 0.987 | 0.987 |
+| real-injected -> real | **0.478** | 0.435 |
+| real only -> real | **0.522** | 0.512 |
+| real-injected + real -> real | 0.522 | 0.498 |
+
+| | before (pure synthetic) | after (real-injected) |
+|---|---|---|
+| domain gap | +0.544 | +0.508 |
+| real-world accuracy | 0.435 | 0.478 |
+
+### The honest reading
+
+Injection moved both numbers in the right direction — real-world accuracy
++0.043, gap closed by 0.036 — but **the improvement is not statistically
+distinguishable from zero**, and it would be dishonest to present it as a win.
+
+```
+95% CI on real held-out accuracy (n = 46)
+  pure synthetic -> real   0.435   [0.302, 0.578]
+  real-injected  -> real   0.478   [0.341, 0.619]
+  real only      -> real   0.522   [0.381, 0.659]
+
+difference +0.043, standard error 0.104
+95% CI on the difference: [-0.160, +0.246]
+```
+
+Every interval overlaps every other. Resolving a 0.043 difference at 95%
+confidence needs roughly 1000 examples per arm; the held-out set has 46. The
+correct statement is: *with the real data currently processed, this experiment
+cannot determine whether real-background injection helps.*
+
+Two things are nonetheless clear from the table and do not depend on the
+uncertain comparison:
+
+1. **Both self-test numbers are ~0.98 and both real-world numbers are ~0.45.**
+   Injecting onto real backgrounds did not stop the model from learning its
+   training distribution far better than it generalises. Whatever the residual
+   cause is, real noise alone did not remove it.
+2. **`real only -> real` (0.522) is the best regime tested**, on just 110
+   training rows. That is a strong hint that real labelled data is worth more
+   per row than injected data, and that Priority 1's download is the higher-value
+   lever — but with these interval widths it is a hint, not a conclusion.
+
+The real-label download was still running when this was measured (170 of a
+planned ~1400 targets processed). Re-running `scripts/compare_domains.py` once
+it completes is the single change that would make this comparison decisive.
+
 ## What real data caught that simulation could not
 
 The classifier scored **97.4% held-out accuracy on synthetic light curves** and
