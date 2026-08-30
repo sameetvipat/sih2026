@@ -16,6 +16,7 @@ import argparse
 import glob
 import os
 import sys
+import time
 from concurrent.futures import ProcessPoolExecutor
 
 import numpy as np
@@ -46,6 +47,14 @@ def _baseline_pool(manifest: str) -> pd.DataFrame:
     return _BASELINES
 
 
+# Trim baselines to the length of the real evaluation set. Two reasons: a
+# 44-day window makes the BLS period grid much denser than the 33.5-day Kepler
+# Q1 curves we test against (25 s per example vs ~11 s), and training on a
+# longer baseline than we evaluate on is itself a domain mismatch -- transit
+# counts and SDE both scale with observing span.
+BASELINE_MAX_DAYS = 33.5
+
+
 def _load_baseline(manifest: str, seed: int, split: str | None):
     """Draw a raw baseline, stratified across brightness bins.
 
@@ -68,11 +77,23 @@ def _load_baseline(manifest: str, seed: int, split: str | None):
         pool = sub if len(sub) else pool
     row = pool.iloc[int(rng.integers(0, len(pool)))]
     d = np.load(row["path"], allow_pickle=True)
-    err = d["flux_err"] if "flux_err" in d and d["flux_err"].size else None
-    return (np.asarray(d["time"], float), np.asarray(d["flux"], float),
-            err, str(row["target"]))
+    t = np.asarray(d["time"], float)
+    f = np.asarray(d["flux"], float)
+    err = (np.asarray(d["flux_err"], float)
+           if "flux_err" in d and d["flux_err"].size else None)
+    if t.size and (t.max() - t.min()) > BASELINE_MAX_DAYS:
+        keep = t <= (t.min() + BASELINE_MAX_DAYS)
+        t, f = t[keep], f[keep]
+        err = err[keep] if err is not None else None
+    return t, f, err, str(row["target"])
 
 FLUSH_EVERY = 100
+# Flush on elapsed time as well as row count. Count alone is not enough: at
+# ~13 s per injected example, a 100-row threshold means ~20 minutes of
+# completed work sits unwritten, and a stop discards all of it (measured: an
+# interrupted injection run banked 0 rows while the download job, which already
+# had time-based flushing, preserved 368).
+FLUSH_SECONDS = 60.0
 
 
 def one_sample(args) -> dict | None:
@@ -232,14 +253,18 @@ def main():
 
     buf: list[dict] = []
     shard_i = len(glob.glob(os.path.join(shard_dir, "part_*.parquet")))
+    last_flush = time.monotonic()
     try:
         with ProcessPoolExecutor(max_workers=args.jobs) as ex:
             for row in tqdm(ex.map(one_sample, tasks, chunksize=4),
                             total=len(tasks)):
                 if row is not None:
                     buf.append(row)
-                if len(buf) >= FLUSH_EVERY:
+                due = (len(buf) >= FLUSH_EVERY
+                       or (buf and time.monotonic() - last_flush >= FLUSH_SECONDS))
+                if due:
                     shard_i = flush(buf, shard_dir, shard_i)
+                    last_flush = time.monotonic()
     except KeyboardInterrupt:
         print("\ninterrupted -- flushing what is complete", file=sys.stderr)
     finally:

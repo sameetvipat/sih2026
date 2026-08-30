@@ -32,7 +32,7 @@ def main():
     # stratify by brightness so neither pool is all bright or all faint
     df["split"] = "train"
     for b, grp in df.groupby("brightness_bin"):
-        idx = grp.index.to_numpy()
+        idx = grp.index.to_numpy().copy()   # to_numpy() can be read-only
         rng.shuffle(idx)
         n_test = max(1, int(round(len(idx) * args.test_frac)))
         df.loc[idx[:n_test], "split"] = "test"
