@@ -143,6 +143,9 @@ def one_sample(args) -> dict | None:
         row["cadence_min"] = cadence
         row["source"] = source
         row["baseline_target"] = baseline_target
+        # `target` lets downstream leakage checks verify that a
+        # training row and an evaluation row are not the same star
+        row["target"] = baseline_target
         return row
     except Exception as exc:                      # keep the batch alive
         print(f"[warn] seed={seed} label={label}: {exc}", file=sys.stderr)

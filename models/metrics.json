@@ -1,43 +1,43 @@
 {
-  "accuracy": 0.9870689655172413,
-  "macro_f1": 0.9880878497819079,
-  "log_loss_raw": 0.05666772653852328,
-  "log_loss_calibrated": 0.05666772653852328,
+  "accuracy": 0.7142857142857143,
+  "macro_f1": 0.7092184508232837,
+  "log_loss_raw": 0.8804475049912477,
+  "log_loss_calibrated": 0.764183975086205,
   "confusion": [
     [
-      48,
-      0,
-      1,
-      1,
+      64,
+      2,
+      9,
+      7,
+      0
+    ],
+    [
+      7,
+      71,
+      5,
+      4,
+      0
+    ],
+    [
+      13,
+      2,
+      45,
+      5,
+      0
+    ],
+    [
+      12,
+      5,
+      9,
+      9,
       0
     ],
     [
       0,
-      50,
-      0,
-      0,
-      0
-    ],
-    [
-      1,
-      0,
-      48,
-      0,
-      0
-    ],
-    [
       0,
       0,
       0,
-      56,
-      0
-    ],
-    [
-      0,
-      0,
-      0,
-      0,
-      27
+      11
     ]
   ],
   "classes": [
@@ -48,27 +48,27 @@
     "noise"
   ],
   "importances": {
-    "log_depth": 1538,
-    "sde": 1231,
-    "odd_even_sigma": 1014,
-    "secondary_depth_ratio": 807,
-    "trap_t23_t14": 778,
-    "log_snr": 761,
-    "log_rho_implied": 757,
-    "ls_power_ratio": 648,
-    "secondary_sigma": 579,
-    "trap_depth_ratio": 556,
-    "oot_skew": 535,
-    "odd_even_sigma_2p": 507,
-    "depth_consistency": 506,
-    "sec_ratio_2p": 500,
-    "log_period": 490,
-    "log_duration_hr": 400,
-    "duration_phase_frac": 387,
-    "shape_resid_ratio": 375,
-    "odd_even_frac": 350,
-    "sec_ratio_2p_dev": 293,
-    "sec_sigma_2p": 160,
-    "n_transits": 132
+    "sde": 2469,
+    "trap_t23_t14": 2266,
+    "log_snr": 2206,
+    "secondary_depth_ratio": 2170,
+    "log_depth": 2135,
+    "trap_depth_ratio": 1896,
+    "ls_power_ratio": 1884,
+    "oot_skew": 1856,
+    "secondary_sigma": 1803,
+    "odd_even_sigma_2p": 1722,
+    "shape_resid_ratio": 1717,
+    "sec_ratio_2p_dev": 1643,
+    "odd_even_sigma": 1473,
+    "log_period": 1406,
+    "sec_ratio_2p": 1404,
+    "sec_sigma_2p": 1384,
+    "log_rho_implied": 1243,
+    "depth_consistency": 1008,
+    "odd_even_frac": 968,
+    "duration_phase_frac": 964,
+    "n_transits": 366,
+    "log_duration_hr": 221
   }
 }

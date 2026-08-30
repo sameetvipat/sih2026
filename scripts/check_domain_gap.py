@@ -61,12 +61,42 @@ def _fit(X, y, seed=0):
     return m
 
 
+class LeakageError(SystemExit):
+    """Raised when the training set overlaps the evaluation set."""
+
+
+def _assert_disjoint(train: pd.DataFrame, real: pd.DataFrame):
+    """Refuse to measure when the model was trained on the evaluation data.
+
+    This check exists to catch an inflated accuracy, so it must not be the
+    thing that produces one. Training on a set that includes the real rows and
+    then evaluating on those same rows scored 1.000 with every class perfect --
+    and an earlier version of this script PASSED it and printed "report 1.000
+    as the model's accuracy". A gap check that can be satisfied by leakage is
+    worse than no gap check.
+    """
+    if "target" not in train.columns:
+        raise LeakageError(
+            "the training set has no `target` column, so overlap with the "
+            "evaluation set cannot be verified.\n"
+            "Rebuild it keeping `target` (injected rows may use their "
+            "baseline id) so this check can do its job.")
+    shared = set(train["target"].dropna()) & set(real["target"].dropna())
+    if shared:
+        raise LeakageError(
+            f"LEAKAGE: {len(shared)} targets appear in BOTH the training set "
+            f"and the real evaluation set, e.g. {sorted(shared)[:3]}.\n"
+            "Any accuracy measured this way is meaningless. Hold the "
+            "evaluation targets out of training and re-run.")
+
+
 def measure(train_path: str, real_path: str, seed: int = 0):
     """Returns (self_test_acc, cross_domain_acc, gap, detail dict)."""
     tr = pd.read_parquet(train_path)
     real = pd.read_parquet(real_path)
     if "error" in real:
         real = real[real["error"].isna()]
+    _assert_disjoint(tr, real)
 
     Xs, ys, _ = _xy(tr)
     Xr, yr, real_df = _xy(real)
