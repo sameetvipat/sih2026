@@ -124,7 +124,13 @@ def secondary_test(time, flux, period, t0, duration, primary_depth):
     at_sec = np.abs(np.abs(phase) - 0.5) < dur_phase / 2.0
     oot = (np.abs(phase) > 2 * dur_phase) & (np.abs(np.abs(phase) - 0.5) > 2 * dur_phase)
     if at_sec.sum() < 5 or oot.sum() < 20:
-        return 0.0, 0.0
+        # NOT (0, 0): that would encode an unmeasurable test as a confident
+        # "no secondary at all", which is the strongest possible evidence
+        # against a planet. Measured on real Kepler data, 32.6% of rows hit
+        # this path (long periods against a 33.5-day baseline) and every one
+        # was handed to the model as a maximally non-planet-like value.
+        # NaN says "unknown", which LightGBM handles natively.
+        return np.nan, np.nan
     base = np.median(f[oot])
     sec_depth = base - np.mean(f[at_sec])
     err = np.std(f[oot]) / np.sqrt(at_sec.sum())
@@ -203,7 +209,9 @@ def harmonic_test(time, flux, period, t0, duration):
     """
     p2 = 2.0 * period
     if (time.max() - time.min()) < 1.5 * p2:
-        return 0.0, 1.0, 0.0     # baseline too short to test the harmonic
+        # Baseline cannot hold 1.5 cycles at 2P, so the test is unmeasurable
+        # rather than negative. 12.4% of real rows land here.
+        return np.nan, np.nan, np.nan
     sec_sigma, sec_ratio = secondary_test(time, flux, p2, t0, duration,
                                           primary_depth=_fold_depth(time, flux, p2, t0, duration))
     oe_sigma, _ = odd_even_test(time, flux, p2, t0, duration)
@@ -230,6 +238,7 @@ def extract_features(time, flux, det) -> dict:
 
     oe_sigma, oe_frac = odd_even_test(time, flux, P, t0, dur)
     sec_sigma, sec_ratio = secondary_test(time, flux, P, t0, dur, depth)
+    # NaN propagates deliberately: an unmeasured test must stay unknown
     sec_sig2, sec_rat2, oe_sig2 = harmonic_test(time, flux, P, t0, dur)
 
     # local view around mid-transit for the shape fit
@@ -262,7 +271,8 @@ def extract_features(time, flux, det) -> dict:
         # a genuine planet folded at 2P shows two equal-depth events, so this
         # sits near 0; any deviation -- in either direction -- means the two
         # alternating events differ, i.e. BLS found half an EB's true period.
-        "sec_ratio_2p_dev": float(abs(sec_rat2 - 1.0)),
+        "sec_ratio_2p_dev": (float(abs(sec_rat2 - 1.0))
+                             if np.isfinite(sec_rat2) else np.nan),
         "odd_even_sigma_2p": oe_sig2,
         "trap_t23_t14": trap["ratio"],
         "trap_depth_ratio": float(np.clip(trap["depth"] / depth, 0, 10)),

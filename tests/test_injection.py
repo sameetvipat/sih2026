@@ -164,3 +164,27 @@ def test_baseline_splits_are_disjoint():
     test = set(df[df.split == "test"]["target"])
     assert not (train & test), f"baselines in both splits: {sorted(train & test)[:5]}"
     assert len(test) > 0 and len(train) > 0
+
+
+def test_unmeasurable_secondary_returns_nan_not_zero():
+    """Regression: an unmeasurable test must not look like a confident answer.
+
+    secondary_test used to return (0, 0) when the phase-0.5 window held too few
+    points, which the derived sec_ratio_2p_dev turned into 1.0 -- the strongest
+    possible evidence against a planet. 32.6% of real Kepler rows hit that path.
+    """
+    from exodet.features import secondary_test
+    t = np.linspace(0, 5, 300)           # far too short to fold at any period
+    f = np.ones_like(t)
+    sigma, ratio = secondary_test(t, f, period=40.0, t0=0.0, duration=0.1,
+                                  primary_depth=0.01)
+    assert np.isnan(sigma) and np.isnan(ratio), (
+        "unmeasurable secondary must be NaN, not a confident zero")
+
+
+def test_unmeasurable_harmonic_returns_nan():
+    from exodet.features import harmonic_test
+    t = np.linspace(0, 10, 500)          # baseline < 1.5 * 2P
+    f = np.ones_like(t)
+    a, b, c = harmonic_test(t, f, period=8.0, t0=0.0, duration=0.1)
+    assert all(np.isnan(v) for v in (a, b, c))

@@ -7,10 +7,10 @@ B='\033[1m'; G='\033[32m'; Y='\033[33m'; R='\033[31m'; D='\033[2m'; N='\033[0m'
 printf "${B}┌─ SIH2026 EXOPLANET PIPELINE ────────────────────────────────┐${N}\n"
 
 # --- jobs ---
-JOBS=$(ps -eo command | grep -cE "[b]uild_baseline|[b]uild_real|[m]ake_dataset")
+JOBS=$(ps -eo command | grep -cE "python[^ ]* [s]cripts/(make_dataset|build_real_dataset|build_baseline_bank)\.py")
 if [ "$JOBS" -gt 0 ]; then
   printf "${B}│${N} ${G}●${N} %-58s ${B}│${N}\n" "$JOBS job(s) running"
-  ps -eo etime,command | grep -E "[b]uild_baseline|[b]uild_real|[m]ake_dataset" \
+  ps -eo etime,command | grep -E "python[^ ]* [s]cripts/(make_dataset|build_real_dataset|build_baseline_bank)\.py" \
     | awk '{printf "  '"$D"'%s'"$N"'  %s\n", $1, $2}' | sed 's/scripts\///' \
     | while read -r l; do printf "${B}│${N}   %-56s ${B}│${N}\n" "$l"; done
 else
@@ -37,7 +37,7 @@ printf "${B}├─ INJECTED SET (Priority 0) ───────────�
 IP=$(tr '\r' '\n' < "$LOG/inject.log" 2>/dev/null | grep -v '^$' | tail -1)
 printf "${B}│${N} %-58s ${B}│${N}\n" "${IP:0:58}"
 printf "${B}├─ REAL LABELS (Priority 1) ──────────────────────────────────┤${N}\n"
-RP=$(tr '\r' '\n' < "$LOG/real4.log" 2>/dev/null | grep -v '^$' | grep -v truncated | tail -1)
+RP=$(tr '\r' '\n' < "$LOG/real5.log" 2>/dev/null | grep -v '^$' | grep -v truncated | tail -1)
 printf "${B}│${N} %-58s ${B}│${N}\n" "${RP:0:58}"
 printf "${B}├─ DATA ──────────────────────────────────────────────────────┤${N}\n"
 .venv/bin/python - <<'PY' 2>/dev/null

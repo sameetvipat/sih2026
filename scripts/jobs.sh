@@ -4,7 +4,7 @@
 #         ./scripts/jobs.sh -w     refresh every 5s (Ctrl-C to exit)
 cd "$(dirname "$0")/.." || exit 1
 LOG=/private/tmp/claude-501/-Users-sameetvipat-Developer-sih2026/192aab2b-bb04-4512-9cd1-52af7a969583/scratchpad
-PAT='[s]cripts/make_dataset|[s]cripts/build_real_dataset|[s]cripts/build_baseline_bank|[u]vicorn api.main'
+PAT='python[^ ]* [s]cripts/(make_dataset|build_real_dataset|build_baseline_bank)\.py|[u]vicorn api\.main'
 
 show() {
   printf '\033[1m%-6s %-9s %-7s %-9s %s\033[0m\n' PID ELAPSED CPU% WORKERS JOB
@@ -16,12 +16,12 @@ show() {
     n=$(pgrep -P "$pid" 2>/dev/null | wc -l | tr -d ' ')
     job=$(echo "$cmd" | grep -oE '(scripts/[a-z_]+\.py|api\.main)' | head -1)
     printf '%-6s %-9s %-7s %-9s %s\n' "$pid" "$etime" "$cpu" "$n" "${job:-?}"
-  done < <(ps -eo pid,etime,pcpu,command | grep -E "$PAT" | grep -v grep \
+  done < <(ps -eo pid,etime,pcpu,command | grep -E "$PAT" | grep -vE 'zsh -c|grep -E' \
            | awk '{print $1, $2, $3, substr($0, index($0,$4))}')
   [ "$found" -eq 0 ] && echo "(no pipeline jobs running)"
 
   echo
-  for f in inject:injected real4:real-labels baselines2:baselines; do
+  for f in inject:injected real5:real-labels baselines2:baselines; do
     local key=${f%%:*} name=${f##*:}
     [ -f "$LOG/$key.log" ] || continue
     local line
