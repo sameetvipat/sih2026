@@ -101,78 +101,57 @@ results rather than crash:
    values for Pi Men c when it was a definitional mismatch. `FitResult` now
    reports both.
 
-## Real-background injection: the result, and why it is inconclusive
+## Results
+
+**Accuracy on real data: 0.653** (95% CI [0.599, 0.703], macro F1 0.614), on
+**320 held-out real Kepler light curves the model never saw**. Four classes,
+chance 0.25. The same model scores 0.716 on held-out data from its own training
+distribution; that number is not this pipeline's accuracy and appears only for
+contrast.
+
+| class | precision | recall | n |
+|---|---|---|---|
+| transit | 0.58 | 0.72 | 74 |
+| eclipse | 0.87 | 0.83 | 108 |
+| blend | 0.44 | 0.35 | 57 |
+| variable | 0.58 | 0.57 | 81 |
+
+### Did real-background injection help? No, not measurably.
 
 The diagnosed cause of the synthetic-to-real collapse was that the simulated
-noise model is too clean. The fix was to stop simulating a noise floor and
-borrow a real one: inject known-truth signals onto 463 real quiet Kepler stars
-(`scripts/build_baseline_bank.py`), vetted so BLS finds nothing in them, and
-stratified across three brightness bins.
+noise model is too clean, so we stopped simulating a noise floor and borrowed
+one: inject known-truth signals onto 463 real quiet Kepler stars
+(`scripts/build_baseline_bank.py`), vetted so BLS finds nothing in them,
+stratified across three brightness bins (154 bright / 150 medium / 159 faint),
+with train and test baselines split before any example was generated.
 
-**Mission-matching decision:** baselines and evaluation targets are both Kepler.
-This is the mission-matched experiment — "does real-background injection close
-the gap when the injection background matches the target domain?" Cross-mission
-generalisation is a separate question and is not claimed here.
+**Mission-matching:** baselines and evaluation targets are both Kepler — the
+mission-matched experiment. Cross-mission generalisation is not claimed.
 
-### The numbers
-
-Three injectable classes only (transit / eclipse / blend). VARIABLE is excluded
-from this comparison on purpose: it has no injected counterpart, so it can only
-come from the real training half — 32 rows against ~600 injected. Under
-`class_weight="balanced"` each of those rows carries ~6x the weight of an
-injected one, and the model over-predicts VARIABLE (measured: recall 0.889 at
-precision 0.229). Including it compares two different problems.
-
-| regime | accuracy | macro F1 |
+| regime (3-class, n=285) | accuracy | macro F1 |
 |---|---|---|
 | pure synthetic, self-test | 0.979 | 0.978 |
-| pure synthetic -> real | 0.435 | 0.421 |
-| real-injected, self-test | 0.987 | 0.987 |
-| real-injected -> real | **0.478** | 0.435 |
-| real only -> real | **0.522** | 0.512 |
-| real-injected + real -> real | 0.522 | 0.498 |
+| pure synthetic -> real | 0.600 | 0.572 |
+| real-injected -> real | 0.625 | 0.594 |
+| **real only -> real** | **0.681** | **0.636** |
+| real-injected + real -> real | 0.677 | 0.644 |
 
-| | before (pure synthetic) | after (real-injected) |
-|---|---|---|
-| domain gap | +0.544 | +0.508 |
-| real-world accuracy | 0.435 | 0.478 |
+Injection's contribution is **+0.025, 95% CI [-0.055, +0.105]** — not
+distinguishable from zero. What closed the gap was **real labelled data**: 1065
+real light curves brought the production domain gap from +0.526 to **+0.063**.
 
-### The honest reading
+Feature-level evidence explains why. Both features spot-checked
+(`scripts/check_features.py`) survive injection but collapse on real catalogued
+objects — implied stellar density lands in the physical band for 90.2% of
+injected rows against 49.4% of real ones. Real backgrounds fixed the noise
+floor, not signal realism.
 
-Injection moved both numbers in the right direction — real-world accuracy
-+0.043, gap closed by 0.036 — but **the improvement is not statistically
-distinguishable from zero**, and it would be dishonest to present it as a win.
+### The four-class comparison is confounded — read the three-class one
 
-```
-95% CI on real held-out accuracy (n = 46)
-  pure synthetic -> real   0.435   [0.302, 0.578]
-  real-injected  -> real   0.478   [0.341, 0.619]
-  real only      -> real   0.522   [0.381, 0.659]
-
-difference +0.043, standard error 0.104
-95% CI on the difference: [-0.160, +0.246]
-```
-
-Every interval overlaps every other. Resolving a 0.043 difference at 95%
-confidence needs roughly 1000 examples per arm; the held-out set has 46. The
-correct statement is: *with the real data currently processed, this experiment
-cannot determine whether real-background injection helps.*
-
-Two things are nonetheless clear from the table and do not depend on the
-uncertain comparison:
-
-1. **Both self-test numbers are ~0.98 and both real-world numbers are ~0.45.**
-   Injecting onto real backgrounds did not stop the model from learning its
-   training distribution far better than it generalises. Whatever the residual
-   cause is, real noise alone did not remove it.
-2. **`real only -> real` (0.522) is the best regime tested**, on just 110
-   training rows. That is a strong hint that real labelled data is worth more
-   per row than injected data, and that Priority 1's download is the higher-value
-   lever — but with these interval widths it is a hint, not a conclusion.
-
-The real-label download was still running when this was measured (170 of a
-planned ~1400 targets processed). Re-running `scripts/compare_domains.py` once
-it completes is the single change that would make this comparison decisive.
+`VARIABLE` has no injected counterpart, so in the injected regime it can only
+come from real data. Under `class_weight="balanced"` that imbalance drives the
+model to over-predict it. `compare_domains.py --classes transit eclipse blend`
+compares like with like.
 
 ## What real data caught that simulation could not
 
