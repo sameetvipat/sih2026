@@ -179,11 +179,11 @@ def test_fit_reliability_flag_catches_bad_fits():
     good = FitResult(period=1, period_err=0, t0=0, t0_err=0, depth=0,
                      depth_err=0, depth_obs=0, depth_obs_err=0, duration=0,
                      duration_err=0, rp=0, rp_err=0, aRs=10, b=0,
-                     chi2_red=1.7, converged=True)
+                     chi2_red=1.7, beta_red_noise=1.0, converged=True)
     bad = FitResult(period=1, period_err=0, t0=0, t0_err=0, depth=0,
                     depth_err=0, depth_obs=0, depth_obs_err=0, duration=0,
                     duration_err=0, rp=0, rp_err=0, aRs=10, b=0,
-                    chi2_red=16.9, converged=True)
+                    chi2_red=16.9, beta_red_noise=1.0, converged=True)
     assert good.reliable and not bad.reliable
 
 

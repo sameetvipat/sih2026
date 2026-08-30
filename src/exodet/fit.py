@@ -15,13 +15,26 @@ from scipy.optimize import least_squares
 
 from .simulate import a_over_rs, transit_duration, transit_model
 
-# Fixed quadratic limb-darkening coefficients.
-# Assumption: a Sun-like host in the TESS bandpass.  Fitting these alongside
-# depth and impact parameter is strongly degenerate at TESS S/N, so we hold
-# them fixed and note it as a systematic in the report.
-U_FIXED = (0.4, 0.2)
+# Quadratic limb-darkening coefficients for a Sun-like host.
+#
+# These used to be held fixed, and injection-recovery showed that was the
+# dominant error in the recovered depth: refitting identical light curves with
+# the TRUE coefficients cut the median depth error from 6.19% to 0.70%. Because
+# u was fixed, the posterior captured only the ~1.35% statistical scatter and
+# none of that ~6% systematic, so quoted depth uncertainties came out roughly
+# 4x too narrow (robust pull sigma 4.01 against an ideal of 1.0).
+#
+# u1 is therefore sampled under a Gaussian prior and u2 held fixed: the two are
+# strongly correlated with each other, so sampling one carries most of the
+# uncertainty while avoiding a degenerate second free parameter.
+U_PRIOR_MEAN = 0.4
+U_PRIOR_SIGMA = 0.15
+U2_FIXED = 0.2
 
-PARAM_NAMES = ["t0", "period", "rp", "aRs", "b"]
+# Kept for callers that need a representative pair for plotting a model curve.
+U_FIXED = (U_PRIOR_MEAN, U2_FIXED)
+
+PARAM_NAMES = ["t0", "period", "rp", "aRs", "b", "u1"]
 
 
 @dataclass
@@ -42,6 +55,7 @@ class FitResult:
     aRs: float
     b: float
     chi2_red: float
+    beta_red_noise: float
     converged: bool
     samples: np.ndarray | None = field(default=None, repr=False)
 
@@ -69,14 +83,57 @@ class FitResult:
             "duration_err_hours": self.duration_err * 24.0,
             "rp_over_rs": self.rp, "rp_over_rs_err": self.rp_err,
             "impact_param": self.b, "a_over_rs": self.aRs,
-            "chi2_reduced": self.chi2_red, "converged": self.converged,
+            "chi2_reduced": self.chi2_red,
+            "beta_red_noise": self.beta_red_noise,
+            "converged": self.converged,
             "parameters_reliable": self.reliable,
         }
 
 
 def _model(theta, t):
-    t0, period, rp, aRs, b = theta
-    return transit_model(t, period, t0, rp, aRs, b, U_FIXED)
+    t0, period, rp, aRs, b, u1 = theta
+    return transit_model(t, period, t0, rp, aRs, b, (u1, U2_FIXED))
+
+
+def red_noise_beta(time, residuals, duration, max_beta: float = 10.0) -> float:
+    """Winn et al. (2008) beta factor: how much red noise inflates uncertainties.
+
+    The likelihood treats every point as independent, so parameter errors scale
+    as 1/sqrt(N). Real photometry is correlated on the timescale that matters
+    for a transit, which means the effective N is far smaller than the point
+    count and the posterior comes out too narrow.
+
+    Measured here by injection-recovery: quoted depth error bars were ~4x too
+    small (robust pull sigma 4.01, and a median quoted error of 1.35% against a
+    median true residual of 3.89%) even though reduced chi-square sat near 1.5.
+    Point-to-point scatter looking healthy is exactly why chi-square alone does
+    not catch this.
+
+    beta compares the scatter of residuals binned on the transit-duration
+    timescale against the sqrt(N) fall-off white noise would give. beta = 1
+    means uncorrelated; larger means correlated, and parameter errors should be
+    multiplied by it.
+    """
+    r = np.asarray(residuals, float)
+    r = r[np.isfinite(r)]
+    if r.size < 20 or duration <= 0:
+        return 1.0
+
+    cadence = float(np.median(np.diff(np.sort(np.asarray(time, float)))))
+    if not np.isfinite(cadence) or cadence <= 0:
+        return 1.0
+
+    n_per_bin = int(max(2, round(duration / cadence)))
+    n_bins = r.size // n_per_bin
+    if n_bins < 4:
+        return 1.0
+
+    binned = r[:n_bins * n_per_bin].reshape(n_bins, n_per_bin).mean(axis=1)
+    observed = float(np.std(binned))
+    expected = float(np.std(r)) / np.sqrt(n_per_bin)      # white-noise fall-off
+    if expected <= 0:
+        return 1.0
+    return float(np.clip(observed / expected, 1.0, max_beta))
 
 
 def observed_depth(theta) -> float:
@@ -88,7 +145,7 @@ def observed_depth(theta) -> float:
     deeper than rp^2, and the literature usually quotes the *observed* value --
     so we report both rather than silently picking one.
     """
-    t0, period, rp, aRs, b = theta
+    t0, period, rp, aRs, b = theta[:5]
     # sample one transit densely around mid-transit
     dur = transit_duration(period, rp, aRs, b)
     if not np.isfinite(dur) or dur <= 0:
@@ -124,10 +181,10 @@ def fit_transit(time, flux, flux_err, det, run_mcmc=True,
 
     # seed a/R* from the observed duration, assuming a central transit
     aRs0 = float(np.clip(P0 / (np.pi * dur0), 2.0, 200.0))
-    theta0 = [t00, P0, rp0, aRs0, 0.3]
+    theta0 = [t00, P0, rp0, aRs0, 0.3, U_PRIOR_MEAN]
 
-    lo = [t00 - dur0, P0 * 0.98, 1e-3, 1.5, 0.0]
-    hi = [t00 + dur0, P0 * 1.02, 0.6, 300.0, 1.0]
+    lo = [t00 - dur0, P0 * 0.98, 1e-3, 1.5, 0.0, 0.0]
+    hi = [t00 + dur0, P0 * 1.02, 0.6, 300.0, 1.0, 1.0]
     theta0 = [float(np.clip(v, l, h)) for v, l, h in zip(theta0, lo, hi)]
 
     converged = True
@@ -136,8 +193,11 @@ def fit_transit(time, flux, flux_err, det, run_mcmc=True,
                             bounds=(lo, hi), method="trf", max_nfev=3000)
         best = res.x
         chi2_red = float(np.sum(res.fun ** 2) / max(len(f) - len(best), 1))
+        beta = red_noise_beta(t, res.fun * e, transit_duration(
+            best[1], best[2], best[3], best[4]))
     except Exception:
         best, chi2_red, converged = np.array(theta0), np.nan, False
+        beta = 1.0
 
     samples = None
     errs = dict.fromkeys(PARAM_NAMES, np.nan)
@@ -147,17 +207,19 @@ def fit_transit(time, flux, flux_err, det, run_mcmc=True,
     if run_mcmc and converged:
         samples = _run_mcmc(t, f, e, best, lo, hi, n_walkers, n_steps, n_burn, seed)
         if samples is not None:
+            # Inflate by beta: the posterior width assumes independent points
+            # and is too narrow when the noise is correlated.
             for i, name in enumerate(PARAM_NAMES):
-                errs[name] = float(np.std(samples[:, i]))
+                errs[name] = float(np.std(samples[:, i]) * beta)
             # propagate to the derived quantities the problem statement asks for
             depth_samp = samples[:, 2] ** 2
-            depth_err = float(np.std(depth_samp))
+            depth_err = float(np.std(depth_samp) * beta)
             dur_samp = np.array([
                 transit_duration(s[1], s[2], s[3], s[4])
                 for s in samples[np.random.default_rng(seed).choice(
                     len(samples), size=min(800, len(samples)), replace=False)]
             ])
-            duration_err = float(np.std(dur_samp[np.isfinite(dur_samp)]))
+            duration_err = float(np.std(dur_samp[np.isfinite(dur_samp)]) * beta)
             # propagate to the observed depth too -- evaluating the model per
             # sample is expensive, so use a random subset of the chain
             sub = samples[np.random.default_rng(seed + 1).choice(
@@ -166,9 +228,9 @@ def fit_transit(time, flux, flux_err, det, run_mcmc=True,
             obs_samp = obs_samp[np.isfinite(obs_samp)]
             if obs_samp.size > 10:
                 depth_obs = float(np.median(obs_samp))
-                depth_obs_err = float(np.std(obs_samp))
+                depth_obs_err = float(np.std(obs_samp) * beta)
 
-    t0f, Pf, rpf, aRsf, bf = best
+    t0f, Pf, rpf, aRsf, bf, u1f = best
     duration = transit_duration(Pf, rpf, aRsf, bf)
 
     return FitResult(
@@ -179,7 +241,8 @@ def fit_transit(time, flux, flux_err, det, run_mcmc=True,
         duration=float(duration), duration_err=duration_err,
         rp=float(rpf), rp_err=errs["rp"],
         aRs=float(aRsf), b=float(bf),
-        chi2_red=chi2_red, converged=converged, samples=samples,
+        chi2_red=chi2_red, beta_red_noise=float(beta),
+        converged=converged, samples=samples,
     )
 
 
@@ -198,7 +261,11 @@ def _run_mcmc(t, f, e, best, lo, hi, n_walkers, n_steps, n_burn, seed):
             return -np.inf
         if not np.all(np.isfinite(resid)):
             return -np.inf
-        return -0.5 * float(np.sum(resid ** 2))
+        # Gaussian prior on u1: unconstrained limb darkening is degenerate with
+        # impact parameter, but fixing it hides a systematic larger than the
+        # statistical error.
+        lp = -0.5 * ((theta[5] - U_PRIOR_MEAN) / U_PRIOR_SIGMA) ** 2
+        return lp - 0.5 * float(np.sum(resid ** 2))
 
     rng = np.random.default_rng(seed)
     ndim = len(best)
