@@ -30,6 +30,7 @@ from sklearn.model_selection import train_test_split
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from exodet.features import FEATURE_NAMES          # noqa: E402
+from exodet.metrics import report as metric_report  # noqa: E402
 
 SHARED = ["transit", "eclipse", "blend", "variable"]
 
@@ -79,13 +80,18 @@ def measure(train_path: str, real_path: str, seed: int = 0):
     self_acc = accuracy_score(ys_te, m_self.predict(Xs_te))
     self_f1 = f1_score(ys_te, m_self.predict(Xs_te), average="macro")
 
-    # cross-domain: the whole training set, tested on real data
+    # cross-domain: the whole training set, tested on real data.
+    # Per-class metrics are mandatory here, not optional: aggregate accuracy on
+    # a class-imbalanced real set can look healthy while one class is never
+    # predicted at all.
     m_full = _fit(Xs, ys, seed)
-    cross_acc = accuracy_score(yr, m_full.predict(Xr))
-    cross_f1 = f1_score(yr, m_full.predict(Xr), average="macro")
+    pred_r = m_full.predict(Xr)
+    r = metric_report(yr, pred_r, SHARED, "REAL-DATA EVALUATION")
+    cross_acc, cross_f1 = r["accuracy"], r["macro_f1"]
 
     return self_acc, cross_acc, self_acc - cross_acc, {
         "self_f1": self_f1, "cross_f1": cross_f1,
+        "ci": (r["ci_low"], r["ci_high"]),
         "n_train": len(ys), "n_real": len(yr),
         "real_counts": real_df["label"].value_counts().to_dict(),
     }
@@ -115,7 +121,8 @@ def main():
     print(f"  real evaluation set : {args.real}  (n={d['n_real']})")
     print(f"  real class counts   : {d['real_counts']}")
     print(f"  self-test accuracy  : {self_acc:.3f}   macro F1 {d['self_f1']:.3f}")
-    print(f"  real-data accuracy  : {cross_acc:.3f}   macro F1 {d['cross_f1']:.3f}")
+    print(f"  real-data accuracy  : {cross_acc:.3f}   macro F1 {d['cross_f1']:.3f}"
+          f"   95% CI [{d['ci'][0]:.3f}, {d['ci'][1]:.3f}]")
     print(f"  gap                 : {gap:+.3f}   (threshold {args.threshold:.3f})")
     print("=" * 64)
 

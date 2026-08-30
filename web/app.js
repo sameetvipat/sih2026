@@ -74,16 +74,44 @@ async function boot() {
     const pill = $("clsPill");
     pill.textContent = t.classifier_loaded ? "classifier loaded" : "no classifier";
     pill.className = "pill " + (t.classifier_loaded ? "on" : "off");
+    setFallbackBanner(t.classifier_loaded);
   } catch (e) {
     $("main").innerHTML = `<div class="banner bad">Cannot reach the API: ${e}</div>`;
   }
   pollHealth();
 }
 
+
+// A missing classifier degrades the pipeline to detection + fitting only, and
+// the app keeps working -- which is exactly the danger. On unfamiliar hardware
+// (a fresh clone on presentation morning, LightGBM failing to find OpenMP) the
+// demo would run and quietly answer none of the classification questions a
+// judge is there to ask. A status chip is too easy to miss, so this states it
+// across the top of the page and says what to do about it.
+function setFallbackBanner(loaded) {
+  const existing = document.getElementById("fallbackBanner");
+  if (loaded) { if (existing) existing.remove(); return; }
+  if (existing) return;
+  const el = document.createElement("div");
+  el.id = "fallbackBanner";
+  el.className = "banner bad";
+  el.style.margin = "0 0 16px";
+  el.innerHTML =
+    "<b>Degraded mode &mdash; no classifier loaded.</b> " +
+    "Detection, vetting features and transit fitting all still work, but " +
+    "nothing on this page is classified: no transit / eclipse / blend call, " +
+    "no confidence, no feature drivers. " +
+    "Train one with <code>python scripts/train.py</code>, or on Linux check " +
+    "that LightGBM found OpenMP (<code>apt-get install libgomp1</code>).";
+  const main = document.getElementById("main");
+  main.parentNode.insertBefore(el, main);
+}
+
 async function pollHealth() {
   try {
     const h = await (await fetch("/api/health")).json();
     $("warmPill").textContent = `cache ${h.warm_entries}`;
+    setFallbackBanner(h.classifier_loaded);
     if (h.classifier_loaded) {
       $("clsPill").textContent = "classifier loaded";
       $("clsPill").className = "pill on";

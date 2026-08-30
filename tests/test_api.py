@@ -190,3 +190,60 @@ def test_app_js_uses_only_real_detection_fields(client):
         "multi_detrend": False}).json()["detection"])
     used = set(re.findall(r"\bdet\.([a-zA-Z_][a-zA-Z0-9_]*)", js))
     assert used <= valid, f"app.js reads unknown detection fields: {used - valid}"
+
+
+def test_shap_drivers_reach_the_api_response(client):
+    """P5.4: the per-candidate explanation must survive to the JSON payload.
+
+    Confirming classify.explain() works in isolation is not enough -- the demo
+    shows whatever /api/analyze returns.
+    """
+    if not client.get("/api/health").json()["classifier_loaded"]:
+        pytest.skip("no classifier loaded")
+    r = client.post("/api/analyze", json={
+        "simulate": "transit", "seed": 7, "run_mcmc": False,
+        "multi_detrend": False})
+    assert r.status_code == 200
+    cls = r.json()["classification"]
+    assert cls is not None
+    assert cls["drivers"], "no feature drivers in the response"
+    for name, value in cls["drivers"]:
+        assert isinstance(name, str) and isinstance(value, (int, float))
+
+
+def test_drivers_are_per_candidate_not_global_importances(client):
+    """classify.explain() falls back to global feature importances when SHAP
+    fails. That fallback returns the SAME features for every candidate, which
+    would look fine in a demo while explaining nothing about the specific
+    object. Different classes must yield different drivers.
+    """
+    if not client.get("/api/health").json()["classifier_loaded"]:
+        pytest.skip("no classifier loaded")
+
+    def drivers(label):
+        r = client.post("/api/analyze", json={
+            "simulate": label, "seed": 7, "run_mcmc": False,
+            "multi_detrend": False}).json()
+        cls = r.get("classification")
+        return [k for k, _ in (cls["drivers"] if cls else [])]
+
+    a, b = drivers("transit"), drivers("eclipse")
+    assert a and b
+    assert a != b, (
+        f"identical drivers for transit and eclipse ({a}) -- explain() has "
+        "silently fallen back to global importances")
+
+
+def test_frontend_has_a_visible_fallback_banner():
+    """P4.2: degraded mode must be visible in the page, not only in the API.
+
+    Without the classifier the app still renders detections and fits, so a
+    demo can silently answer none of the classification questions it appears
+    to answer. A status chip is too easy to miss.
+    """
+    import os
+    js = open(os.path.join(os.path.dirname(__file__), "..", "web", "app.js")).read()
+    assert "setFallbackBanner" in js
+    assert "fallbackBanner" in js
+    # must be driven by the health endpoint, not a one-time page-load guess
+    assert js.index("setFallbackBanner") < js.index("pollHealth")

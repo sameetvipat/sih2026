@@ -35,6 +35,7 @@ from sklearn.model_selection import train_test_split
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from exodet.features import FEATURE_NAMES         # noqa: E402
+from exodet.metrics import difference_ci, report  # noqa: E402
 
 # `noise` is excluded: a Kepler KOI is by definition a detected signal, so the
 # real catalogue has no counterpart and the class cannot be compared fairly.
@@ -84,15 +85,19 @@ def fit(X, y, seed=0):
     return m
 
 
-def evaluate(model, X, y, title, show_report=False):
+def evaluate(model, X, y, title, show_report=True):
+    """Every real-data evaluation reports per-class metrics, not just accuracy.
+
+    A class-imbalanced real set lets a majority-class predictor post a
+    respectable aggregate number while never predicting some class at all.
+    """
     pred = model.predict(X)
+    if show_report:
+        r = report(y, pred, SHARED, title)
+        return r["accuracy"], r["macro_f1"]
     acc, f1 = accuracy_score(y, pred), f1_score(y, pred, average="macro")
     print(f"\n--- {title} ---")
     print(f"accuracy {acc:.3f}   macro F1 {f1:.3f}   (n={len(y)})")
-    if show_report:
-        print(classification_report(y, pred, labels=list(range(len(SHARED))),
-                                    target_names=SHARED, zero_division=0,
-                                    digits=3))
     return acc, f1
 
 
@@ -148,20 +153,19 @@ def main():
             Xs, ys, test_size=0.25, stratify=ys, random_state=args.seed)
         results["pure synthetic self-test"] = evaluate(
             fit(Xs_a, ys_a, args.seed), Xs_b, ys_b,
-            "PURE SYNTHETIC self-test (the misleading number)")
+            "PURE SYNTHETIC self-test (the misleading number)", show_report=False)
 
     if inj is not None:
         inj_full = pd.concat([inj, var_tr], ignore_index=True)
         Xi, yi = xy(inj_full)
         results["real-injected -> real"] = evaluate(
             fit(Xi, yi, args.seed), Xte, yte,
-            "REAL-INJECTED (+real variables) -> real held-out",
-            show_report=True)
+            "REAL-INJECTED (+real variables) -> real held-out")
         Xi_a, Xi_b, yi_a, yi_b = train_test_split(
             Xi, yi, test_size=0.25, stratify=yi, random_state=args.seed)
         results["real-injected self-test"] = evaluate(
             fit(Xi_a, yi_a, args.seed), Xi_b, yi_b,
-            "REAL-INJECTED self-test")
+            "REAL-INJECTED self-test", show_report=False)
 
     Xr, yr = xy(real_tr)
     if len(np.unique(yr)) == len(SHARED):
@@ -201,8 +205,14 @@ def main():
     if g_syn is not None and g_inj is not None:
         print(f"gap closed by injection    : {g_syn - g_inj:+.3f}")
     if "pure synthetic -> real" in results and "real-injected -> real" in results:
-        d = results["real-injected -> real"][0] - results["pure synthetic -> real"][0]
-        print(f"real-world accuracy change : {d:+.3f}")
+        a = results["pure synthetic -> real"][0]
+        b = results["real-injected -> real"][0]
+        d, lo, hi, sig = difference_ci(a, b, len(yte))
+        print(f"real-world accuracy change : {d:+.3f}   "
+              f"95% CI [{lo:+.3f}, {hi:+.3f}]")
+        print(f"                             "
+              f"{'distinguishable from zero' if sig else 'NOT distinguishable from zero'}"
+              f" at n={len(yte)}")
 
 
 if __name__ == "__main__":

@@ -364,6 +364,35 @@ uv venv --python 3.12 .venv
 uv pip install -r requirements.txt setuptools   # setuptools shims distutils for batman
 ```
 
+### Linux, Kaggle and Colab
+
+LightGBM needs an OpenMP runtime, and the way it is supplied differs by
+platform. On macOS that is `brew install libomp` (above). On Debian-based Linux
+— which is what Kaggle and Colab run — it is:
+
+```bash
+apt-get update && apt-get install -y libgomp1
+pip install -r requirements.txt
+```
+
+Recent `lightgbm` wheels for manylinux usually bundle their own OpenMP, in
+which case `libgomp1` is already satisfied and the install works untouched. But
+wheel packaging has changed across versions, so do not assume it: run this in a
+fresh session before relying on it.
+
+```python
+# paste into the first Kaggle/Colab cell -- fails loudly rather than at train time
+import lightgbm, sklearn, numpy
+print("lightgbm", lightgbm.__version__)
+lightgbm.LGBMClassifier(n_estimators=2).fit([[0], [1]], [0, 1])
+print("OpenMP OK")
+```
+
+**Status: not verified on Kaggle/Colab by the authors.** This project was
+developed and tested on macOS (Apple silicon, Python 3.12). The commands above
+are the documented Debian equivalents, not something we have executed in those
+environments — run the check cell before a session you care about.
+
 ## Usage
 
 ```bash
@@ -448,6 +477,23 @@ digits.
 The three cached real targets and one example per simulated class are analysed
 in a background thread at startup, so the first click in a demo is instant and
 does not depend on MAST being reachable.
+
+### A caveat on reported confidences
+
+Every probability the API and UI display is calibrated on a held-out split, and
+`classify.train` keeps the calibrator only when it actually improves held-out
+log loss. That guards against calibration making things worse, but it does not
+make the calibration *reliable* at the current data scale.
+
+The real labelled set is a few hundred rows split three ways, which leaves a
+calibration split in the low tens. Isotonic regression needs far more than that
+to fit a trustworthy mapping, and even Platt scaling is noisy there — which is
+why `_best_calibrator` picks between them on an inner split rather than
+assuming isotonic. Treat a displayed "92% confidence" as a rank ordering, not
+as a claim that 92 of 100 such cases are correct.
+
+Recalibration is warranted once the real labelled set grows; until then the
+number is directional.
 
 ## Limitations
 
