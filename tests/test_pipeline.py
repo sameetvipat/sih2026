@@ -310,3 +310,32 @@ def test_injected_limb_darkening_is_physical():
     us = np.array([draw_limb_darkening(rng) for _ in range(2000)])
     u1, u2 = us[:, 0], us[:, 1]
     assert np.all(u1 > 0) and np.all(u1 + u2 < 1) and np.all(u1 + 2 * u2 > 0)
+
+
+def test_oot_variability_feature_needs_the_trend_not_the_detrended_flux():
+    """The trap this feature was written into, pinned so it cannot return.
+
+    Stellar variability is what the detrender removes, so by the time features
+    are extracted the detrended flux is the one place it is guaranteed NOT to
+    be. Measured there, a heavily spotted star scores LOWER than a quiet one --
+    the filter having worked reads as the star being calm. The amplitude must
+    come from the trend.
+    """
+    from exodet.features import oot_variability_to_depth
+
+    rng = np.random.default_rng(0)
+    t = np.linspace(0, 27, 4000)
+    depth = 0.001
+    # a star whose spot modulation is 20x its transit depth
+    trend = 1.0 + 20 * depth * np.sin(2 * np.pi * t / 4.9)
+    flat = np.ones_like(t) + rng.normal(0, 1e-4, t.size)   # after detrending
+
+    spotted = oot_variability_to_depth(t, flat, 8.0, 1.0, 0.1, depth, trend=trend)
+    quiet = oot_variability_to_depth(t, flat, 8.0, 1.0, 0.1, depth,
+                                     trend=np.ones_like(t))
+    assert spotted > quiet + 1.0, (
+        f"spotted star ({spotted:.2f}) did not separate from quiet one "
+        f"({quiet:.2f}) -- is the amplitude being read off the trend?")
+    # 20x the depth, so log10 of the ratio should land near 1.3 (peak-to-peak
+    # of a sine is ~2x its amplitude, measured 2nd-98th percentile)
+    assert 1.0 < spotted < 2.0, f"ratio miscalibrated: {spotted:.2f}"

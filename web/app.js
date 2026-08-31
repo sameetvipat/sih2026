@@ -205,7 +205,28 @@ function render(d) {
       the published <b>${t.published_period} d</b>.</div>`;
   }
 
-  $("main").innerHTML = head + banner + `
+  // The classifier and the fit disagree. This sits above the classification
+  // card deliberately: the whole failure mode it guards against is a reader
+  // seeing a confident label and stopping there.
+  let caution = "";
+  if (d.caution_flag) {
+    caution = `<div class="banner bad">
+      <b>Caution — treat this classification with suspicion.</b><br>
+      ${d.caution_reason || "the fit does not describe the data"}</div>`;
+  }
+
+  // The retained detection came from the fallback detrender, so its SDE is the
+  // better of two trials rather than a single measurement.
+  let detrendNote = "";
+  if (d.detrend_is_fallback && d.sde_corrected != null) {
+    detrendNote = `<div class="banner warn">
+      Detected by the fallback <b>${d.detrend_method}</b> detrender, not the
+      primary one. Across ${d.n_detrend_trials} trials the SDE of
+      <b>${fmt(det.sde, 2)}</b> is worth <b>${fmt(d.sde_corrected, 2)}</b> after
+      a look-elsewhere discount.</div>`;
+  }
+
+  $("main").innerHTML = head + caution + banner + detrendNote + `
     <div class="metrics">
       <div class="card"><div class="k">Classification</div>
         <div class="v" style="color:${col}">${cls ? cls.label : "—"}</div>

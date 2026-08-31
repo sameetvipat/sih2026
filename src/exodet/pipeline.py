@@ -45,6 +45,12 @@ class Result:
     # there is really an eclipsing signal here.
     caution_flag: bool = False
     caution_reason: str | None = None
+    # Multi-detrend bookkeeping. `sde` is the raw statistic of the winning
+    # trial; `sde_corrected` is what it is worth once the search over
+    # detrenders is accounted for.
+    n_detrend_trials: int = 1
+    detrend_is_fallback: bool = False
+    sde_corrected: float | None = None
 
     def summary_lines(self) -> list[str]:
         if not self.detected:
@@ -66,6 +72,12 @@ class Result:
             f"SDE / SNR      : {d.sde:.1f} / {d.snr:.1f}",
             f"Transits seen  : {d.n_transits}",
         ]
+        if self.detrend_is_fallback and self.sde_corrected is not None:
+            out.append(
+                f"  note: this detection came from the fallback '"
+                f"{self.detrend_method}' detrender, not the primary one. "
+                f"Across {self.n_detrend_trials} trials the SDE is worth "
+                f"{self.sde_corrected:.2f} after a look-elsewhere discount.")
         if self.fit is not None and self.fit.converged:
             f = self.fit
             out += [
@@ -101,6 +113,7 @@ def analyze(time, flux, flux_err=None, model=None, calibrator=None,
     raw_time, raw_flux = np.asarray(time), np.asarray(flux)
 
     best = None
+    n_trials = 0
     for method in detrend_methods:
         try:
             t_, f_, e_, trend_ = prepare(raw_time, raw_flux, flux_err,
@@ -110,6 +123,7 @@ def analyze(time, flux, flux_err=None, model=None, calibrator=None,
             det_, periods_, power_ = run_bls(t_, f_, e_)
         except Exception:
             continue
+        n_trials += 1                    # count only trials that actually ran
         if best is None or det_.sde > best[0].sde:
             best = (det_, periods_, power_, t_, f_, e_, trend_, method)
 
@@ -118,6 +132,7 @@ def analyze(time, flux, flux_err=None, model=None, calibrator=None,
                       message="too few valid points after cleaning")
 
     det, periods, power, t, f, e, trend, used_method = best
+    primary_method = detrend_methods[0] if detrend_methods else used_method
 
     # Second pass: mask the transits we just found and re-detrend, so the
     # filter cannot bend down into the signal and suppress its depth.
@@ -139,13 +154,16 @@ def analyze(time, flux, flux_err=None, model=None, calibrator=None,
                     time=t, flux=f, trend=trend,
                     raw_time=raw_time, raw_flux=raw_flux,
                     detrend_method=used_method,
+                    n_detrend_trials=n_trials,
+                    detrend_is_fallback=(used_method != primary_method),
+                    sde_corrected=look_elsewhere_sde(det.sde, n_trials),
                     periods=periods, power=power)
 
     if not det.detected:
         result.message = "below detection threshold"
         return result
 
-    result.features = extract_features(t, f, det)
+    result.features = extract_features(t, f, det, trend=trend)
 
     if model is not None:
         pred = predict_one(model, calibrator, result.features)
@@ -168,6 +186,51 @@ def analyze(time, flux, flux_err=None, model=None, calibrator=None,
 
     result.caution_flag, result.caution_reason = _cross_check(result)
     return result
+
+
+def look_elsewhere_sde(sde: float, n_trials: int) -> float:
+    """Discount an SDE for the number of detrenders the search chose between.
+
+    Trying two filters and keeping whichever gave the higher SDE is a search,
+    not a measurement. The retained value is then the maximum of two draws, and
+    comparing a maximum against a threshold calibrated for a single draw
+    inflates the effective false-alarm rate -- roughly two-fold per extra trial
+    in the tail. The pipeline documented this and did not correct it; this is
+    the correction.
+
+    The standard bounded form (Sidak) treats the trials as independent, maps the
+    SDE to a Gaussian-equivalent single-trial tail probability, multiplies the
+    false-alarm rate by the trial count, and maps back:
+
+        p1  = 1 - Phi(SDE)
+        pN  = 1 - (1 - p1)^N        ~= N * p1  in the tail
+        SDE_corrected = Phi^-1(1 - pN)
+
+    Two properties worth stating plainly, because the number is easy to
+    over-read:
+
+    * This is deliberately CONSERVATIVE -- an upper bound on the inflation, not
+      an estimate of it. Independence is assumed and is false here: biweight and
+      lowess are different filters run over the same photons and their SDEs are
+      strongly correlated, so the true effective trial count is between 1 and 2,
+      nearer 1. The real correction is therefore SMALLER than this one.
+    * The Gaussian mapping is itself an approximation. BLS SDE is not exactly
+      Gaussian-distributed under the null, so this is a calibrated-scale
+      discount rather than an exact p-value.
+
+    It is reported alongside the raw SDE rather than replacing it, and does not
+    change the detection decision -- moving the threshold onto a corrected
+    statistic would silently redefine every count in the existing dataset.
+    """
+    from scipy.stats import norm
+
+    if not np.isfinite(sde) or n_trials <= 1:
+        return float(sde)
+    p1 = norm.sf(sde)
+    if p1 <= 0:                       # SDE beyond float resolution of the tail
+        return float(sde)
+    p_n = -np.expm1(n_trials * np.log1p(-p1))    # 1-(1-p1)^N, stable in the tail
+    return float(np.clip(norm.isf(p_n), 0.0, sde))
 
 
 # Classes whose label asserts a specific geometric event, and so can be

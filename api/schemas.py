@@ -93,6 +93,14 @@ class AnalyzeResponse(BaseModel):
     features: dict[str, float] | None = None
     series: Series | None = None
     detrend_method: str = "biweight"
+    # The pipeline tries several detrenders and keeps whichever gave the higher
+    # SDE. That is a search, so the retained SDE is a maximum over trials and is
+    # worth slightly less than the same value from a single trial. Both are
+    # reported: the raw statistic, and what it is worth after a conservative
+    # look-elsewhere discount. See pipeline.look_elsewhere_sde.
+    n_detrend_trials: int = 1
+    detrend_is_fallback: bool = False
+    sde_corrected: float | None = None
     # Raised when the classifier's label and the fit's reliability disagree.
     # Kept at the top level rather than inside `classification` or `fit`,
     # because it is a statement about the two of them together and belongs to

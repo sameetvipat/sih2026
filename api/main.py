@@ -241,6 +241,9 @@ def _to_response(res, target: TargetInfo, elapsed: float) -> AnalyzeResponse:
         target=target, detected=True, detection=detection,
         classification=classification, fit=fit, features=feats,
         series=_series_from(res), detrend_method=res.detrend_method,
+        n_detrend_trials=res.n_detrend_trials,
+        detrend_is_fallback=res.detrend_is_fallback,
+        sde_corrected=res.sde_corrected,
         caution_flag=res.caution_flag, caution_reason=res.caution_reason,
         elapsed_seconds=elapsed)
 

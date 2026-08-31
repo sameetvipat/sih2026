@@ -31,7 +31,7 @@ FEATURE_NAMES = [
     "sec_sigma_2p", "sec_ratio_2p", "sec_ratio_2p_dev", "odd_even_sigma_2p",
     "trap_t23_t14", "trap_depth_ratio", "shape_resid_ratio",
     "log_rho_implied", "depth_consistency", "ls_power_ratio",
-    "oot_skew",
+    "oot_skew", "log_oot_var_to_depth",
 ]
 
 
@@ -192,6 +192,68 @@ def ls_power_ratio(time, flux, period):
         return 0.0
 
 
+def oot_variability_to_depth(time, flux, period, t0, duration, depth,
+                             trend=None):
+    """Amplitude of stellar variability, per unit signal depth.
+
+    The AU Mic b failure mode, made measurable. AU Mic is a young star whose
+    starspot modulation has ~19x the amplitude of its planet's transit; BLS
+    still finds the transit, but the shape diagnostics are computed against a
+    baseline that was itself moving, so the classifier sees a distorted event
+    and calls it an eclipse with real confidence.
+
+    Nothing in the existing feature set says "the star is louder than the
+    signal". `ls_power_ratio` measures where periodogram power sits, which is a
+    different question -- being a ratio of powers it is blind to absolute
+    amplitude, so a quiet star and a violently spotted one with the same
+    spectral shape score alike.
+
+    The subtlety that makes this feature work at all: by the time features are
+    extracted the flux has been DETRENDED, and detrending is precisely the step
+    that removes stellar variability. Measured on the detrended flux this
+    feature reads AU Mic b as quieter than Pi Men c -- backwards -- because the
+    filter already did its job. The variability has not been lost, though; it
+    has been moved into `trend`. So the amplitude is measured there, on what the
+    detrender removed, which is a direct measurement of what the star was doing
+    under the transit.
+
+    Falls back to the out-of-transit scatter of the detrended flux when no trend
+    is supplied, which keeps the feature defined for callers that do not have
+    one -- but that fallback measures noise, not spottedness, and is much the
+    weaker signal.
+
+    Returned as log10: the raw ratio spans orders of magnitude, and a tree split
+    on it in linear space would be dominated by the tail.
+    """
+    if depth <= 0 or duration <= 0 or period <= 0:
+        return 0.0
+
+    if trend is not None and np.size(trend) == np.size(flux):
+        tr = np.asarray(trend, float)
+        tr = tr[np.isfinite(tr)]
+        if tr.size < 50:
+            return 0.0
+        # Peak-to-peak of the removed trend, robust to the ends of the window
+        # where filters ring. Normalised because `trend` is a multiplicative
+        # baseline, not a flux decrement.
+        lo, hi = np.percentile(tr, [2.0, 98.0])
+        med = float(np.median(tr))
+        amp = float(hi - lo) / (abs(med) if med else 1.0)
+    else:
+        epoch = np.round((time - t0) / period).astype(int)
+        dt = (time - t0) - epoch * period
+        oot = np.abs(dt) > 1.5 * duration
+        if oot.sum() < 50:
+            return 0.0
+        f_oot = flux[oot]
+        mad = float(np.median(np.abs(f_oot - np.median(f_oot))))
+        amp = 1.4826 * mad
+
+    if not np.isfinite(amp) or amp <= 0:
+        return 0.0
+    return float(np.log10(np.clip(amp / depth, 1e-4, 1e4)))
+
+
 def harmonic_test(time, flux, period, t0, duration):
     """Re-examine the signal at twice the detected period.
 
@@ -232,8 +294,14 @@ def _fold_depth(time, flux, period, t0, duration):
 # --------------------------------------------------------------------------- #
 # Assembly
 # --------------------------------------------------------------------------- #
-def extract_features(time, flux, det) -> dict:
-    """Compute the full vetting feature vector for one detection."""
+def extract_features(time, flux, det, trend=None) -> dict:
+    """Compute the full vetting feature vector for one detection.
+
+    `trend` is what the detrender removed. It is optional so that callers
+    holding only a cleaned light curve still work, but supplying it is strongly
+    preferred: stellar variability lives in the trend by construction, and
+    `log_oot_var_to_depth` is near-useless without it.
+    """
     P, t0, dur, depth = det.period, det.t0, det.duration, max(det.depth, 1e-7)
 
     oe_sigma, oe_frac = odd_even_test(time, flux, P, t0, dur)
@@ -250,6 +318,7 @@ def extract_features(time, flux, det) -> dict:
             dict(depth=depth, t14=dur, t23=dur * 0.5, ratio=0.5, resid_ratio=1.0))
 
     rho = implied_density(P, dur, depth)
+    oot_var = oot_variability_to_depth(time, flux, P, t0, dur, depth, trend)
     oot = flux[np.abs(dt) > 2.5 * dur]
     skew = (float(np.mean(((oot - oot.mean()) / oot.std()) ** 3))
             if oot.size > 30 and oot.std() > 0 else 0.0)
@@ -281,4 +350,5 @@ def extract_features(time, flux, det) -> dict:
         "depth_consistency": per_transit_consistency(time, flux, P, t0, dur),
         "ls_power_ratio": ls_power_ratio(time, flux, P),
         "oot_skew": float(np.clip(skew, -10, 10)),
+        "log_oot_var_to_depth": oot_var,
     }
