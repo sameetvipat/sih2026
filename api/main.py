@@ -326,8 +326,25 @@ def _warm():
 # --------------------------------------------------------------------------- #
 @app.get("/api/health", response_model=HealthResponse)
 def health():
+    # The failure that broke this today: a model trained on N features while the
+    # code emits N+1. It loads fine, so classifier_loaded stays true, and every
+    # predict call then raises inside the request -- HTTP 500 with a healthy
+    # health check. Compare the two counts here, where it is cheap to catch.
+    usable = _model is not None
+    if _model is not None:
+        try:
+            n_model = getattr(_model, "n_features_in_", None)
+            if n_model is not None and int(n_model) != len(FEATURE_NAMES):
+                usable = False
+                print(f"[api] MODEL MISMATCH: trained on {n_model} features, "
+                      f"code produces {len(FEATURE_NAMES)}. Classification "
+                      f"disabled -- retrain, or restore "
+                      f"models/demo_frozen/classifier.joblib")
+        except Exception:
+            pass
+
     return HealthResponse(
-        status="ok", classifier_loaded=_model is not None, classes=CLASSES,
+        status="ok", classifier_loaded=usable, classes=CLASSES,
         n_features=len(FEATURE_NAMES),
         cached_targets=len(glob.glob(os.path.join(CACHE_DIR, "TIC_*.npz"))),
         warm_entries=len(_cache))

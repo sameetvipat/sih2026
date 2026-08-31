@@ -24,3 +24,12 @@ reports/*.csv
 # data/processed/*.parquet  feature tables, ~35 min to regenerate
 # models/classifier.joblib  trained model, so the demo runs immediately
 # web/vendor/plotly.min.js  vendored so a CDN outage cannot break a live demo
+
+# --- frozen demo model: never let tooling touch this ------------------------
+# models/classifier.joblib is a single file that scripts/train.py overwrites on
+# every run, and it is git-tracked, so a pull or checkout can swap it too. When
+# it disagrees with the code's feature count the API returns HTTP 500 on every
+# classification while /api/health still reports classifier_loaded: true --
+# a demo that boots, looks healthy, and answers nothing. This copy is the
+# verified-working fallback and is deliberately outside git's reach.
+models/demo_frozen/
