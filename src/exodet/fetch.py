@@ -66,16 +66,26 @@ SOCKET_STALL_SECONDS = 90.0
 DOWNLOAD_DEADLINE_SECONDS = 420.0
 
 
-def install_socket_timeout(seconds: float = SOCKET_STALL_SECONDS) -> None:
+def install_socket_timeout(seconds: float | None = None) -> None:
     """Apply a process-wide default socket timeout.
 
     astroquery and lightkurve build their own HTTP sessions and expose no
     timeout parameter to pass down, so this global is the only place a read
     stall inside them can be bounded.  It applies to sockets created after this
     call, which is why the harness installs it at import time.
+
+    Calling with no argument installs the default only when nothing has set one
+    -- that guard exists so importing this module cannot clobber a timeout the
+    host application chose.  Passing a value explicitly always wins: the earlier
+    version applied the guard unconditionally, so a caller asking for a tighter
+    bound was silently ignored once the import-time default was in place, and
+    got 90 s while believing it had asked for one.
     """
-    if socket.getdefaulttimeout() is None:
-        socket.setdefaulttimeout(seconds)
+    if seconds is None:
+        if socket.getdefaulttimeout() is None:
+            socket.setdefaulttimeout(SOCKET_STALL_SECONDS)
+        return
+    socket.setdefaulttimeout(seconds)
 
 
 install_socket_timeout()

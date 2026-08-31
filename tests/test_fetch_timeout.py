@@ -116,3 +116,28 @@ def test_a_stalled_read_is_bounded_by_the_deadline_when_the_socket_is_not():
     finally:
         srv.close()
         socket.setdefaulttimeout(None)
+
+
+def test_explicit_socket_timeout_overrides_the_installed_default():
+    """Regression: an explicit argument used to be silently ignored.
+
+    install_socket_timeout applied its "only if unset" guard unconditionally, so
+    once the import-time 90 s default was in place every later call was a no-op.
+    A caller asking for 1 s got 90 s and had no way to tell.
+    """
+    try:
+        install_socket_timeout()                     # default path
+        install_socket_timeout(2.5)                  # explicit must win
+        assert socket.getdefaulttimeout() == 2.5
+    finally:
+        socket.setdefaulttimeout(None)
+
+
+def test_default_call_does_not_clobber_a_host_timeout():
+    """The guard still protects a timeout the host application chose."""
+    try:
+        socket.setdefaulttimeout(17.0)
+        install_socket_timeout()                     # no argument: must not override
+        assert socket.getdefaulttimeout() == 17.0
+    finally:
+        socket.setdefaulttimeout(None)
