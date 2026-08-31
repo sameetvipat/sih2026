@@ -63,6 +63,17 @@ skip) from retryable network failures (stay queued).
   blend usable 199 → 321 in 13 min (61% of the 201 deficit closed)
   extrapolation: full queue in ~41 min, blend reaching ~400
 
+At ~35 min: **blend reached 405 usable — the 400/class target is MET**, up from
+183 in `real.parquet` at session start (199 counting the stalled run's shards).
+This was the session's highest-leverage goal: blend was both the worst class
+(precision 0.44 / recall 0.35) and the most under-sampled.
+
+A note on a false alarm worth not repeating: the tqdm progress line stopped
+advancing in the log for ~5 minutes and looked like the hang bug returning. It
+was not — shard mtimes and row counts showed steady 16-20 rows/min throughout.
+Progress was verified from the shards, which is the durable signal; the tqdm
+line is not.
+
 ## Phase 2 — limb darkening ✅
 
 `u2` was fixed while `u1` was sampled. Both now sampled in the Kipping (2013)
@@ -85,6 +96,37 @@ Direction is correct. Errors were diagnosed as 1.5× too narrow; this recovers
 `simulate.py` draws from the same distribution — previously independent uniform
 ranges u1~U(0.2,0.6), u2~U(0.1,0.4), a rectangle that both admits unphysical
 corners and excludes legitimate ones. Now 100% physically valid by construction.
+
+🔍 CHECKPOINT — `implied_density` in the physical band (0.1–10 g/cm³,
+`log_rho_implied` ∈ [-1,1]), classes transit/eclipse/blend:
+
+| set | in-band |
+|---|---|
+| injected, BEFORE (independent uniform u1,u2) | **90.2%** (n=594) |
+| injected, AFTER (Kipping q1,q2) | **90.3%** (n=590) |
+| real (fixed reference) | **55.5%** (n=1188) |
+
+**Movement: +0.1 pp. NEGATIVE RESULT — the fix did not close the shape gap.**
+Followed the checkpoint's redirect: skipped the secondary Rp/R*, a/R*, b prior
+extension entirely, kept the `u2` fix (independently justified, validated at
+1.24× on Pi Men c), moved on. No further time spent on shape realism.
+
+The pre-fix 90.2% reproduces ref.md exactly. The real-side figure is 55.5%
+rather than ref.md's 49.4% because the real set has grown from 1065 to 1560
+usable rows since that measurement; it is a moving reference, not a discrepancy.
+
+**Why it did not move, mechanistically.** `log_rho_implied` is derived from
+a/R*, and the injection generator draws a/R* from `rho_star ~ U(0.3, 3.0) ×
+1.408 g/cm³` — inside the physical band *by construction*. Limb darkening can
+only perturb it second-hand, through the recovered duration. So this feature was
+never going to respond much to a limb-darkening change, whatever its realism.
+
+That sharpens the diagnosis rather than just recording a null. The 44.5% of REAL
+detections landing outside the band are not there because real *signals* have
+strange shapes — they are there because BLS locked onto the wrong harmonic or
+mismeasured the duration. The gap is in **detection and measurement realism, not
+signal-shape realism**. Injected signals are recovered cleanly because they were
+planted cleanly. Recorded, deliberately not chased, per the directive.
 
 ## Phase 3 — AU Mic b cross-check ✅
 
@@ -156,3 +198,54 @@ README:
 - All existing real shards predate `log_oot_var_to_depth` →
   `scripts/refresh_features.py` must run over the cache before the retrain.
 - Phase 4 retrain not yet started (single consolidated run, as directed).
+
+## Phase 2 — 🔍 CHECKPOINT 3/5 (implied_density) — RUN, RESULT: FLAT
+
+Was missing from this file; run and recorded now.
+
+`implied_density` in the physical band (0.1–10 g/cm³), injectable classes only:
+
+| set | in-band | n |
+|---|---|---|
+| real catalogued (reference) | **55.5%** | 1188 |
+| injected, BEFORE fix (uniform u1/u2) | **90.2%** | 594 |
+| injected, AFTER fix (Kipping q1/q2) | **90.3%** | 590 |
+
+Movement toward real: **−0.1 pp**. Gap 34.8 → 34.9 pp. Nothing moved.
+
+The directive's real-side reference was 49.4% at n=1065; it is 55.5% at n=1188
+after Phase 1 grew the dataset. The synthetic side is unchanged at 90.2/90.3
+either way, so the conclusion does not depend on which reference is used.
+
+**Decision, per the checkpoint's stated rule for a flat result:** the
+limb-darkening hypothesis for shape realism is **falsified**. Skipping the
+secondary Rp/R*, a/R*, b prior extension entirely. Keeping the q1/q2 fix — it is
+independently justified by the depth-uncertainty result (width ratio 1.24×
+Pi Men c, 1.20× WASP-121 b) and that justification does not depend on this
+checkpoint.
+
+**The per-class split is where the real information is:**
+
+| class | injected before | injected after | real |
+|---|---|---|---|
+| transit | 86.7% | 86.3% | 53.2% |
+| eclipse | 88.5% | 88.5% | 80.7% |
+| **blend** | **95.5%** | **96.4%** | **32.8%** |
+
+Blend is the outlier by a wide margin: injected blends land in-band 96.4% of the
+time, real ones 32.8% — a **63.6 pp** gap, against 33 pp for transit and 8 pp for
+eclipse. That is the largest single discrepancy measured in this project, and it
+sits on the worst-performing class.
+
+It also has a physical reading. `implied_density` is derived from period,
+duration and depth assuming the signal comes from the target star. For a real
+blend that assumption is false by construction — the eclipse is on a
+neighbouring star and the depth is diluted — so the inferred density *should*
+come out unphysical. Injected blends apply dilution to a signal whose geometry
+is still self-consistent, so they keep looking physical. The injector reproduces
+the dilution but not the geometric inconsistency that makes a real blend
+detectable as one.
+
+That is a sharper diagnosis than "signal shapes are unrealistic", and it is
+specific to blend rather than general to injection. Not actioned this session
+(the checkpoint says stop), but it is the concrete next hypothesis.

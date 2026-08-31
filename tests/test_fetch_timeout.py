@@ -58,49 +58,61 @@ def test_backoff_retries_a_hang_through_the_same_path_as_an_exception():
     assert calls["n"] == 3, "a hang was not retried like an ordinary failure"
 
 
-def test_unroutable_address_is_bounded_by_the_socket_layer():
-    """TEST-NET-1 (RFC 5737) is guaranteed unroutable, so a connect to it
-    stalls exactly the way a wedged MAST socket does: no RST, no SYN-ACK, just
-    silence.  Here the socket timeout is the *tighter* of the two layers, so it
-    is the one that fires -- and it raises an ordinary TimeoutError, which
-    `with_backoff` already retries.  That is the layer covering library code
-    (astroquery, lightkurve) that exposes no timeout parameter to pass down.
+def _blackhole_server():
+    """A local listener that accepts a connection and then never sends a byte.
+
+    This replaces the earlier TEST-NET-1 (192.0.2.1) tests. Reserved
+    documentation space is *supposed* to be unroutable, but it is not reliably
+    so: on the network these tests were re-run against, 192.0.2.1:80 accepted a
+    connection in 0.25 s -- something upstream (captive portal, ISP interceptor)
+    answers for it. The tests then failed with DID NOT RAISE, reporting a broken
+    timeout when the timeout was fine and the *premise* was wrong.
+
+    A loopback socket that accepts and stalls reproduces the real failure mode --
+    connection established, no data ever arrives -- and does so identically on
+    every network.
     """
-    install_socket_timeout()
-    assert socket.getdefaulttimeout() is not None, "no process-wide socket timeout"
-
-    def connect():
-        s = socket.socket()
-        try:
-            s.settimeout(1.0)
-            s.connect(("192.0.2.1", 80))       # blackholed
-        finally:
-            s.close()
-
-    t0 = time.monotonic()
-    with pytest.raises(TimeoutError):
-        call_with_deadline(connect, timeout=20.0)   # deliberately the looser layer
-    assert time.monotonic() - t0 < 10.0, "connect was not bounded at all"
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    return srv, srv.getsockname()[1]
 
 
-def test_unroutable_address_is_bounded_by_the_deadline_when_the_socket_is_not():
-    """The case the socket timeout alone cannot cover.
+def test_a_stalled_read_is_bounded_by_the_socket_layer():
+    """Connection accepted, no data ever sent: the process-wide timeout fires."""
+    srv, port = _blackhole_server()
+    try:
+        install_socket_timeout(1.0)
+        assert socket.getdefaulttimeout() is not None, "no process-wide socket timeout"
 
-    A socket timeout bounds each individual read, never the total.  With no
-    socket timeout set, a blackholed connect blocks for the OS-level TCP retry
-    budget -- minutes on Linux/macOS -- which is exactly the stall that wedged
-    the last run.  The wall-clock deadline is the only layer that bounds it.
+        t0 = time.monotonic()
+        with pytest.raises((TimeoutError, socket.timeout, OSError)):
+            with socket.create_connection(("127.0.0.1", port)) as s:
+                s.recv(1)                      # server never writes
+        assert time.monotonic() - t0 < 10.0, "the stalled read was not bounded"
+    finally:
+        srv.close()
+        socket.setdefaulttimeout(None)
+
+
+def test_a_stalled_read_is_bounded_by_the_deadline_when_the_socket_is_not():
+    """With no socket timeout at all, the wall-clock deadline must still fire.
+
+    This is the case a per-read timeout cannot cover on its own, and the reason
+    the harness carries two layers rather than one.
     """
-    def connect_untimed():
-        s = socket.socket()
-        try:
-            s.settimeout(None)                  # no per-read bound at all
-            s.connect(("192.0.2.1", 80))
-        finally:
-            s.close()
+    srv, port = _blackhole_server()
+    socket.setdefaulttimeout(None)             # deliberately remove layer one
+    try:
+        def stalls():
+            with socket.create_connection(("127.0.0.1", port)) as s:
+                return s.recv(1)
 
-    t0 = time.monotonic()
-    with pytest.raises(DownloadTimeout):
-        call_with_deadline(connect_untimed, timeout=2.0)
-    elapsed = time.monotonic() - t0
-    assert elapsed < 6.0, f"deadline did not bound an untimed connect ({elapsed:.1f}s)"
+        t0 = time.monotonic()
+        with pytest.raises(DownloadTimeout):
+            call_with_deadline(stalls, timeout=1.0)
+        assert time.monotonic() - t0 < 10.0, "the deadline did not abandon the call"
+    finally:
+        srv.close()
+        socket.setdefaulttimeout(None)
