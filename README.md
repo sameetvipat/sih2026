@@ -354,23 +354,43 @@ apt-get update && apt-get install -y libgomp1
 pip install -r requirements.txt
 ```
 
-Recent `lightgbm` wheels for manylinux usually bundle their own OpenMP, in
-which case `libgomp1` is already satisfied and the install works untouched. But
-wheel packaging has changed across versions, so do not assume it: run this in a
-fresh session before relying on it.
+`libgomp1` is genuinely required — it is **not** bundled in the wheel. This
+was previously recorded here as "recent wheels usually bundle their own
+OpenMP", which is wrong. Checked directly against the published artifact for
+`lightgbm` 4.7.0 (`lightgbm-4.7.0-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl`)
+by parsing the ELF dynamic section of `lightgbm/lib/lib_lightgbm.so`:
+
+```
+DT_NEEDED : libdl.so.2  libstdc++.so.6  libm.so.6  libgomp.so.1
+            libgcc_s.so.1  libpthread.so.0  libc.so.6  ld-linux-x86-64.so.2
+DT_RUNPATH: (none)
+shared objects shipped inside the wheel: lightgbm/lib/lib_lightgbm.so  (only)
+```
+
+`libgomp.so.1` is an external dependency with no `RUNPATH` and no vendored copy
+alongside it, so it must come from the host. Unlike numpy or scipy, this wheel
+is not auditwheel-vendored. In practice Colab and Kaggle images already carry
+`libgomp1` (the gcc runtime pulls it in), which is why this usually appears to
+work without the `apt-get` line — but that is the image's doing, not the
+wheel's, and a slimmer base image will fail at import.
 
 ```python
 # paste into the first Kaggle/Colab cell -- fails loudly rather than at train time
-import lightgbm, sklearn, numpy
+import ctypes, lightgbm, sklearn, numpy
+ctypes.CDLL("libgomp.so.1")              # the actual dependency, checked directly
 print("lightgbm", lightgbm.__version__)
 lightgbm.LGBMClassifier(n_estimators=2).fit([[0], [1]], [0, 1])
 print("OpenMP OK")
 ```
 
-**Status: not verified on Kaggle/Colab by the authors.** This project was
-developed and tested on macOS (Apple silicon, Python 3.12). The commands above
-are the documented Debian equivalents, not something we have executed in those
-environments — run the check cell before a session you care about.
+**Status: wheel-level dependency verified; runtime not executed on Kaggle/Colab
+by the authors.** The `DT_NEEDED` finding above is a direct measurement of the
+published Linux artifact and holds regardless of platform. What has *not* been
+executed is a full train run inside a live Colab/Kaggle session — this project
+was developed and tested on macOS (Apple silicon, Python 3.12), and no Linux
+environment was available in which to run one. Run the check cell above before
+a session you care about; it fails on the real dependency rather than on a
+proxy for it.
 
 ## Usage
 
