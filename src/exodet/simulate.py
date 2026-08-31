@@ -99,6 +99,38 @@ def transit_model(t: np.ndarray, period: float, t0: float, rp: float,
 
 
 # --------------------------------------------------------------------------- #
+# Limb darkening
+# --------------------------------------------------------------------------- #
+def draw_limb_darkening(rng: np.random.Generator) -> tuple[float, float]:
+    """Draw a physically valid quadratic limb-darkening pair.
+
+    u1 and u2 used to be drawn from independent uniform ranges
+    (u1 ~ U(0.2, 0.6), u2 ~ U(0.1, 0.4)). That is wrong in two ways that both
+    push injected signals away from real ones:
+
+    * It treats the two coefficients as independent. They are not -- across the
+      FGKM range real stars occupy a narrow correlated band, and u2 falls as u1
+      rises. Sampling the product space fills in combinations no star occupies.
+    * Its support is a rectangle, but the physically valid region is the
+      triangle u1 + u2 < 1, u1 > 0, u1 + 2*u2 > 0. A rectangle both admits
+      unphysical corners and excludes legitimate ones.
+
+    Drawn instead in the Kipping (2013) (q1, q2) basis that `fit.py` samples in,
+    so injected signals and the model fitted to them share one set of
+    assumptions rather than disagreeing by construction. The sum u1 + u2
+    (= sqrt(q1)) is the well-constrained direction, so it is drawn from the
+    range real FGKM hosts span in the optical; q2 spreads the pair across the
+    valid triangle.
+    """
+    from .fit import q_to_u
+
+    u_sum = rng.uniform(0.35, 0.85)          # FGKM optical, Claret-grid range
+    q1 = u_sum ** 2
+    q2 = rng.uniform(0.25, 0.75)             # avoids the degenerate corners
+    return q_to_u(q1, q2)
+
+
+# --------------------------------------------------------------------------- #
 # Per-class signal builders
 # --------------------------------------------------------------------------- #
 def _draw_common(rng: np.random.Generator, t: np.ndarray,
@@ -111,7 +143,7 @@ def _draw_common(rng: np.random.Generator, t: np.ndarray,
     t0 = t.min() + rng.uniform(0.0, period)
     rho_star = rng.uniform(0.3, 3.0) * 1.408          # g/cm^3, FGKM-ish
     aRs = a_over_rs(period, rho_star)
-    u = (rng.uniform(0.2, 0.6), rng.uniform(0.1, 0.4))
+    u = draw_limb_darkening(rng)
     return period, t0, aRs, u
 
 

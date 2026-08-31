@@ -15,6 +15,17 @@ Design points that are not obvious:
   the global sys.stdout and is explicitly not thread-safe, so concurrent
   enter/exit pairs restore each other's already-closed buffers and unrelated
   targets die with "I/O operation on closed file".
+* **Every network call carries an enforced wall-clock deadline.**  `with_backoff`
+  retries *raised* exceptions, but a stalled socket -- connection accepted, no
+  bytes ever delivered -- raises nothing and blocks forever, so backoff never
+  sees it.  That is not hypothetical: it stalled a full run at 95% completion.
+  Two independent layers now cover it, because neither is sufficient alone.
+  `socket.setdefaulttimeout` catches a stalled *read* inside library code that
+  exposes no timeout parameter (astroquery/lightkurve do not), and
+  `call_with_deadline` caps *total* wall-clock time, which a per-read timeout
+  cannot do -- a server dribbling one byte per second resets the socket timeout
+  forever while making no real progress.  Both surface as ordinary exceptions,
+  so they feed the existing backoff path rather than a second, divergent one.
 * **Shards are written atomically** (temp file then os.replace) so an interrupt
   can never leave a half-written parquet, and a corrupt shard is skipped rather
   than being fatal on resume.
@@ -26,7 +37,9 @@ import glob
 import io
 import os
 import random
+import socket
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, Iterable, Sequence
@@ -38,6 +51,77 @@ import pandas as pd
 # throttling and connection rejections.
 DEFAULT_JOBS = 12
 MAX_JOBS = 20
+
+
+# Per-read socket stall ceiling.  This is NOT a total-download budget: it
+# bounds how long a socket may sit with no bytes arriving.  Set it well above
+# MAST's worst honest latency, or healthy-but-slow transfers get killed and the
+# "fix" looks like a network outage.
+SOCKET_STALL_SECONDS = 90.0
+
+# Total wall-clock ceiling for one target's search+download.  A whole Kepler
+# quarter over a congested link can legitimately take minutes, so this is
+# deliberately generous -- it exists to break infinite hangs, not to enforce
+# throughput.
+DOWNLOAD_DEADLINE_SECONDS = 420.0
+
+
+def install_socket_timeout(seconds: float = SOCKET_STALL_SECONDS) -> None:
+    """Apply a process-wide default socket timeout.
+
+    astroquery and lightkurve build their own HTTP sessions and expose no
+    timeout parameter to pass down, so this global is the only place a read
+    stall inside them can be bounded.  It applies to sockets created after this
+    call, which is why the harness installs it at import time.
+    """
+    if socket.getdefaulttimeout() is None:
+        socket.setdefaulttimeout(seconds)
+
+
+install_socket_timeout()
+
+
+class DownloadTimeout(TimeoutError):
+    """A network call exceeded its wall-clock deadline.
+
+    Subclasses TimeoutError (and so Exception) deliberately: `with_backoff`
+    then retries a hang through exactly the same path it retries a refused
+    connection, instead of needing a parallel timeout-specific retry branch.
+    """
+
+
+def call_with_deadline(fn: Callable, *args, timeout: float, **kwargs):
+    """Run `fn` on a daemon thread and abandon it if it outlives `timeout`.
+
+    A daemon thread rather than ThreadPoolExecutor.submit().result(timeout=...):
+    neither can actually kill a thread blocked in a C-level socket read, but a
+    pool's workers are non-daemon and joined at interpreter exit, so an
+    abandoned hung worker would deadlock process shutdown -- turning a stalled
+    download into a stalled *exit*.  A daemon thread is abandoned cleanly and
+    dies with the process.
+
+    The abandoned thread does keep its connection until the socket timeout above
+    trips it, so the two layers are complementary rather than redundant.
+    """
+    box: dict = {}
+
+    def runner():
+        try:
+            box["value"] = fn(*args, **kwargs)
+        except BaseException as exc:             # noqa: BLE001 - re-raised below
+            box["error"] = exc
+
+    th = threading.Thread(target=runner, daemon=True,
+                          name=f"deadline-{getattr(fn, '__name__', 'call')}")
+    th.start()
+    th.join(timeout)
+    if th.is_alive():
+        raise DownloadTimeout(
+            f"{getattr(fn, '__name__', 'call')} exceeded {timeout:.0f}s "
+            f"wall-clock deadline")
+    if "error" in box:
+        raise box["error"]
+    return box.get("value")
 
 
 # --------------------------------------------------------------------------- #
@@ -112,7 +196,8 @@ def purge_truncated_cache(target: str | None = None) -> int:
 # --------------------------------------------------------------------------- #
 def download_lightcurve(target: str, mission: str, max_segments: int = 1,
                         max_days: float | None = 45.0,
-                        segment: int | None = None):
+                        segment: int | None = None,
+                        deadline: float = DOWNLOAD_DEADLINE_SECONDS):
     """Fetch a light curve as raw (time, flux, flux_err) arrays.
 
     Returns None when nothing usable is available.  Flux is NOT normalised or
@@ -131,10 +216,15 @@ def download_lightcurve(target: str, mission: str, max_segments: int = 1,
     """
     import lightkurve as lk
 
+    # Both the catalogue query and the file transfer are bounded: the query is
+    # the call that stalled the 95%-complete run, and it is the cheaper of the
+    # two, so it gets the tighter share of the budget.
+    search_deadline = min(120.0, deadline * 0.3)
     if mission == "kepler":
-        q = lk.search_lightcurve(target, mission="Kepler", author="Kepler",
-                                 cadence="long")
-        if len(q) == 0:
+        q = call_with_deadline(lk.search_lightcurve, target, mission="Kepler",
+                               author="Kepler", cadence="long",
+                               timeout=search_deadline)
+        if q is None or len(q) == 0:
             return None
         missions = [str(m) for m in q.table["mission"]]
         keep = [i for i, m in enumerate(missions) if "Quarter 00" not in m]
@@ -142,9 +232,10 @@ def download_lightcurve(target: str, mission: str, max_segments: int = 1,
             return None
         q = q[keep]
     else:
-        q = lk.search_lightcurve(target, mission="TESS", author="SPOC",
-                                 exptime=120)
-    if len(q) == 0:
+        q = call_with_deadline(lk.search_lightcurve, target, mission="TESS",
+                               author="SPOC", exptime=120,
+                               timeout=search_deadline)
+    if q is None or len(q) == 0:
         return None
 
     if segment is not None and len(q) > 1:
@@ -154,13 +245,16 @@ def download_lightcurve(target: str, mission: str, max_segments: int = 1,
         q = q[:max_segments]
 
     try:
-        coll = q.download_all()
+        coll = call_with_deadline(q.download_all,
+                                  timeout=max(deadline - search_deadline, 60.0))
         if coll is None or len(coll) == 0:
             return None
         lc = coll.stitch().remove_nans()
     except Exception:
         # Almost always a truncated cached file. Drop the stub so the caller's
-        # retry re-fetches instead of re-reading the same corrupt bytes.
+        # retry re-fetches instead of re-reading the same corrupt bytes.  A
+        # timed-out transfer leaves exactly the same kind of stub, so the purge
+        # matters at least as much on the deadline path as on the error path.
         purge_truncated_cache(target)
         raise
 
@@ -215,7 +309,8 @@ def run_resumable_pool(tasks: Sequence, work_fn: Callable, shard_dir: str,
                        jobs: int = DEFAULT_JOBS, flush_every: int = 25,
                        flush_seconds: float = 60.0,
                        desc: str = "fetching",
-                       failures_path: str | None = None) -> pd.DataFrame:
+                       failures_path: str | None = None,
+                       stall_seconds: float = 900.0) -> pd.DataFrame:
     """Run `work_fn` over `tasks` on a bounded thread pool, checkpointing.
 
     `work_fn(task) -> dict | None`.  A returned dict carrying a non-null
@@ -237,6 +332,26 @@ def run_resumable_pool(tasks: Sequence, work_fn: Callable, shard_dir: str,
     failures: list[dict] = []
     last_flush = time.monotonic()
 
+    # Batch-level watchdog: the per-call deadlines above should make this
+    # unreachable, but "should" is what the last run assumed too.  It watches
+    # completed *results*, not sockets, so it catches a stall anywhere in the
+    # pool -- including a hang in feature extraction rather than the download.
+    progress = {"at": time.monotonic(), "n": 0}
+    stop_watchdog = threading.Event()
+
+    def watchdog():
+        while not stop_watchdog.wait(30.0):
+            idle = time.monotonic() - progress["at"]
+            if idle > stall_seconds:
+                print(f"\n[stall] no completed target in {idle/60:.1f} min "
+                      f"({progress['n']}/{len(tasks)} done). Per-call deadlines "
+                      f"should have prevented this -- the pool is wedged "
+                      f"somewhere they do not cover.", file=sys.stderr)
+                progress["at"] = time.monotonic()   # warn again, don't spam
+
+    wd = threading.Thread(target=watchdog, daemon=True, name="fetch-watchdog")
+    wd.start()
+
     try:
         # One redirect, in this thread only, for the lifetime of the pool.
         # tqdm writes to stderr, so progress still shows.
@@ -254,6 +369,8 @@ def run_resumable_pool(tasks: Sequence, work_fn: Callable, shard_dir: str,
                     if row.get("error"):
                         failures.append(row)
                     buf.append(row)
+                    progress["at"] = time.monotonic()
+                    progress["n"] += 1
                     due = (len(buf) >= flush_every
                            or (time.monotonic() - last_flush) >= flush_seconds)
                     if due:
@@ -262,6 +379,7 @@ def run_resumable_pool(tasks: Sequence, work_fn: Callable, shard_dir: str,
     except KeyboardInterrupt:
         print("\ninterrupted -- flushing completed rows", file=sys.stderr)
     finally:
+        stop_watchdog.set()
         if buf:
             flush_shard(buf, shard_dir, shard_i)
 

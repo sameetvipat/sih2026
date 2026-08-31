@@ -92,33 +92,86 @@ def main():
     # cannot be mapped onto the four-class taxonomy.
     lab = lab[lab["label"] != "false_positive"]
 
-    # Per-class targets follow catalogue availability rather than a naive even
-    # split -- padding a scarce class with ambiguous-flag objects would bake in
-    # label noise, which is exactly what this dataset exists to avoid.
-    avail = lab["label"].value_counts()
-    print("catalogue availability per class:")
-    for c, n in avail.items():
-        want = min(args.per_class, n)
-        note = "" if n >= args.per_class else f"  <- capped by catalogue ({n})"
-        print(f"  {c:<10} available {n:>5}   requesting {want}{note}")
-
-    sample = (lab.sort_values("mag")             # brightest = best S/N per download
-                 .groupby("label", group_keys=False)
-                 .head(args.per_class))
-
     done = load_shards(shard_dir)
+    attempted: set[str] = set()
+    usable = pd.Series(dtype=int)
+    rates: dict[str, float] = {}
     if not done.empty:
         ok_rows = done[done["error"].isna()] if "error" in done else done
-        seen = set(ok_rows["target"])
-        before = len(sample)
-        sample = sample[~sample["target"].isin(seen)]
-        print(f"\nresuming: {len(ok_rows)} good rows on disk, "
-              f"{before - len(sample)} skipped, "
-              f"{len(done) - len(ok_rows)} failures will retry")
+        # "attempted" means *settled*, not merely tried. A no-detection is
+        # deterministic -- the light curve is cached, so re-running BLS on it
+        # burns time to reach the same verdict. A network failure is not
+        # settled, and must stay in the queue or a transient outage silently
+        # becomes a permanent hole in the dataset.
+        errs = done["error"] if "error" in done else pd.Series(dtype=object)
+        settled = done["error"].isna() | done["error"].fillna("").str.startswith(
+            "no detection") if "error" in done else pd.Series(True, index=done.index)
+        attempted = set(done.loc[settled, "target"])
+        retryable = sorted(set(done.loc[~settled, "target"]))
+        if retryable:
+            print(f"[info] {len(retryable)} targets failed for non-deterministic "
+                  f"reasons and stay in the queue")
+        usable = ok_rows["label"].value_counts()
+        # Detection rate is measured, not assumed. It differs sharply by class
+        # (blend detects far worse than eclipse), and using one global rate
+        # would under-request exactly the class that needs the most attempts.
+        for c in done["label"].unique():
+            tried = int((done["label"] == c).sum())
+            got = int(usable.get(c, 0))
+            rates[c] = (got / tried) if tried >= 20 else 0.6
 
+    # The 400/class target counts USABLE rows -- ones where BLS actually found
+    # something to extract features from. Capping *attempts* at 400, as this
+    # script used to, therefore cannot reach it for any class detecting below
+    # 100%: blend detects at ~57%, so 400 attempts asymptotes at ~230 usable.
+    # Attempts are now sized from the measured rate to cover the deficit.
+    avail = lab["label"].value_counts()
+    plan = []
+    for c in avail.index:
+        have = int(usable.get(c, 0))
+        deficit = max(0, args.per_class - have)
+        rate = max(rates.get(c, 0.6), 0.15)      # floor: never demand infinity
+        need = int(np.ceil(deficit / rate)) if deficit else 0
+        pool = lab[(lab["label"] == c) & (~lab["target"].isin(attempted))]
+        take = min(need, len(pool))
+        plan.append(dict(label=c, have=have, deficit=deficit, rate=rate,
+                         need=need, pool=len(pool), take=take))
+
+    # Most-deficient class first, and strictly in blocks rather than
+    # interleaved. Under a hard time ceiling an even spread would leave every
+    # class equally short; a block order means the ceiling truncates the
+    # classes that need the fetch least.
+    plan.sort(key=lambda d: d["deficit"], reverse=True)
+
+    print("download plan (usable-count deficit drives attempt count):")
+    print(f"  {'class':<10}{'usable':>7}{'deficit':>9}{'det.rate':>10}"
+          f"{'attempts':>10}{'unfetched':>11}")
+    for d in plan:
+        note = "" if d["take"] >= d["need"] else "  <- catalogue exhausted"
+        print(f"  {d['label']:<10}{d['have']:>7}{d['deficit']:>9}"
+              f"{d['rate']:>10.2f}{d['take']:>10}{d['pool']:>11}{note}")
+
+    frames = []
+    for d in plan:
+        if d["take"] <= 0:
+            continue
+        pool = lab[(lab["label"] == d["label"]) & (~lab["target"].isin(attempted))]
+        frames.append(pool.sort_values("mag").head(d["take"]))   # brightest first
+    sample = pd.concat(frames) if frames else lab.iloc[0:0]
+
+    if not done.empty:
+        print(f"\nresuming: {len(done)} rows on disk "
+              f"({int(usable.sum())} usable), {len(attempted)} targets skipped")
+    if sample.empty:
+        print("\nevery class is at target; nothing to fetch")
+
+    # sample is already in deficit-priority order; ThreadPoolExecutor consumes
+    # submissions in order, so this is what makes the ceiling truncate the
+    # least-needed class rather than a random one.
     tasks = [(r, args.cache) for r in sample.to_dict("records")]
     if tasks:
-        print(f"\nfetching {len(tasks)} targets on {args.jobs} threads")
+        print(f"\nfetching {len(tasks)} targets on {args.jobs} threads, "
+              f"most-deficient class first")
         run_resumable_pool(tasks, process, shard_dir, jobs=args.jobs,
                            desc="real labels",
                            failures_path="data/processed/failures.csv")

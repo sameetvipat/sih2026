@@ -179,10 +179,12 @@ def test_fit_reliability_flag_catches_bad_fits():
     good = FitResult(period=1, period_err=0, t0=0, t0_err=0, depth=0,
                      depth_err=0, depth_obs=0, depth_obs_err=0, duration=0,
                      duration_err=0, rp=0, rp_err=0, aRs=10, b=0,
+                     u1=0.4, u2=0.2,
                      chi2_red=1.7, beta_red_noise=1.0, converged=True)
     bad = FitResult(period=1, period_err=0, t0=0, t0_err=0, depth=0,
                     depth_err=0, depth_obs=0, depth_obs_err=0, duration=0,
                     duration_err=0, rp=0, rp_err=0, aRs=10, b=0,
+                    u1=0.4, u2=0.2,
                     chi2_red=16.9, beta_red_noise=1.0, converged=True)
     assert good.reliable and not bad.reliable
 
@@ -228,3 +230,83 @@ def test_transit_depths_cover_real_hot_jupiters():
     assert max(depths) > 0.014, (
         f"deepest simulated planet is {max(depths)*1e6:.0f} ppm, "
         "below real hot Jupiters")
+
+
+# --------------------------------------------------------------------------- #
+# classifier / fit cross-check
+# --------------------------------------------------------------------------- #
+def _result(label, chi2, converged=True):
+    """A Result carrying just enough of a fit for the cross-check to judge."""
+    from exodet.pipeline import Result, _cross_check
+
+    class _Fit:
+        CHI2_RELIABLE_MAX = 3.0
+
+        def __init__(self, chi2, converged):
+            self.chi2_red, self.converged = chi2, converged
+
+        @property
+        def reliable(self):
+            return bool(self.converged and np.isfinite(self.chi2_red)
+                        and self.chi2_red < self.CHI2_RELIABLE_MAX)
+
+    r = Result(detected=True, detection=None, label=label, confidence=0.54,
+               probabilities=None, features=None, fit=_Fit(chi2, converged))
+    r.caution_flag, r.caution_reason = _cross_check(r)
+    return r
+
+
+def test_caution_fires_when_a_geometric_label_meets_an_unreliable_fit():
+    """The AU Mic b shape: confident 'eclipse', reduced chi-square ~17."""
+    r = _result("eclipse", 16.7)
+    assert r.caution_flag
+    assert "16.7" in r.caution_reason and "eclipse" in r.caution_reason
+
+
+def test_caution_stays_quiet_on_a_good_fit():
+    assert not _result("transit", 1.2).caution_flag
+
+
+def test_caution_ignores_variable_which_makes_no_geometric_claim():
+    """A poor *transit* fit is consistent with 'variable', not evidence
+    against it, so flagging it would be pure noise."""
+    assert not _result("variable", 16.7).caution_flag
+
+
+def test_caution_stays_quiet_when_the_fit_never_converged():
+    """A failed fit is missing evidence, not contradicting evidence."""
+    assert not _result("eclipse", float("nan"), converged=False).caution_flag
+
+
+def test_limb_darkening_reparameterisation_is_physical_by_construction():
+    """Kipping (2013): the unit square in (q1, q2) IS the valid triangle.
+
+    This is the property the whole reparameterisation rests on -- if it does
+    not hold, the sampler is free to wander into unphysical limb darkening
+    exactly as it was before.
+    """
+    from exodet.fit import q_to_u, u_to_q
+
+    rng = np.random.default_rng(0)
+    q = rng.uniform(0, 1, size=(4000, 2))
+    u1, u2 = np.array([q_to_u(a, b) for a, b in q]).T
+    assert np.all(u1 >= 0), "negative u1 escaped the parameterisation"
+    assert np.all(u1 + u2 <= 1.0 + 1e-12), "u1 + u2 exceeded 1"
+    assert np.all(u1 + 2 * u2 >= -1e-12), "brightness rose toward the limb"
+
+    # round-trip, so seeding the sampler from a (u1, u2) guess lands where meant
+    for a, b in [(0.4, 0.2), (0.6, 0.1), (0.3, 0.35)]:
+        got = q_to_u(*u_to_q(a, b))
+        assert np.allclose(got, (a, b), atol=1e-9)
+
+
+def test_injected_limb_darkening_is_physical():
+    """The injection generator and the fitter must not disagree by
+    construction -- the old independent-uniform draws admitted pairs the
+    fitter's prior gives essentially zero weight."""
+    from exodet.simulate import draw_limb_darkening
+
+    rng = np.random.default_rng(1)
+    us = np.array([draw_limb_darkening(rng) for _ in range(2000)])
+    u1, u2 = us[:, 0], us[:, 1]
+    assert np.all(u1 > 0) and np.all(u1 + u2 < 1) and np.all(u1 + 2 * u2 > 0)

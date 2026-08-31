@@ -146,11 +146,15 @@ def _series_from(res) -> Series:
     # model overlay on the folded view
     model = None
     if res.fit is not None and res.fit.converged:
-        from exodet.fit import U_FIXED
         fr = res.fit
         pm = np.linspace(-0.5, 0.5, 900)
         tm = fr.t0 + pm * fr.period
-        fm = transit_model(tm, fr.period, fr.t0, fr.rp, fr.aRs, fr.b, U_FIXED)
+        # Limb darkening is now fitted, so the overlay uses the fit's own
+        # coefficients rather than a Sun-like stand-in. Plotting a curve with
+        # different limb darkening than the fit that produced its depth makes
+        # the overlay disagree with the number printed beside it.
+        fm = transit_model(tm, fr.period, fr.t0, fr.rp, fr.aRs, fr.b,
+                           (fr.u1, fr.u2))
         model = XY(x=_sig(pm), y=_sig(fm))
 
     p2, f2 = fold(res.time, res.flux, 2 * d.period, d.t0)
@@ -237,6 +241,7 @@ def _to_response(res, target: TargetInfo, elapsed: float) -> AnalyzeResponse:
         target=target, detected=True, detection=detection,
         classification=classification, fit=fit, features=feats,
         series=_series_from(res), detrend_method=res.detrend_method,
+        caution_flag=res.caution_flag, caution_reason=res.caution_reason,
         elapsed_seconds=elapsed)
 
 

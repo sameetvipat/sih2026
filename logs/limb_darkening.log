@@ -1,0 +1,17 @@
+legacy fit.py loaded from HEAD: params ['t0', 'period', 'rp', 'aRs', 'b', 'u1']
+current fit.py params        : ['t0', 'period', 'rp', 'aRs', 'b', 'q1', 'q2']
+
+=== Pi Men c (TIC 261136679) ===
+  arm                      depth_obs ppm   +/- ppm   rel err  chi2_red
+  before (u2 fixed)                302.8       9.4    0.0311      0.83
+  after  (u2 sampled)              299.9      11.7    0.0390      0.82
+  -> uncertainty width ratio after/before = 1.24x
+  -> fitted limb darkening u1=0.000 u2=0.659  (sum 0.659)
+
+=== WASP-121 b (TIC 22529346) ===
+  arm                      depth_obs ppm   +/- ppm   rel err  chi2_red
+  before (u2 fixed)              16308.5     509.7    0.0313      0.08
+  after  (u2 sampled)            16286.5     611.4    0.0375      0.08
+  -> uncertainty width ratio after/before = 1.20x
+  -> fitted limb darkening u1=0.236 u2=0.148  (sum 0.384)
+

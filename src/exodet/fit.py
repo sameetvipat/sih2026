@@ -15,26 +15,64 @@ from scipy.optimize import least_squares
 
 from .simulate import a_over_rs, transit_duration, transit_model
 
-# Quadratic limb-darkening coefficients for a Sun-like host.
+# Quadratic limb darkening, sampled in the Kipping (2013) (q1, q2) basis.
 #
-# These used to be held fixed, and injection-recovery showed that was the
-# dominant error in the recovered depth: refitting identical light curves with
-# the TRUE coefficients cut the median depth error from 6.19% to 0.70%. Because
-# u was fixed, the posterior captured only the ~1.35% statistical scatter and
-# none of that ~6% systematic, so quoted depth uncertainties came out roughly
-# 4x too narrow (robust pull sigma 4.01 against an ideal of 1.0).
+# History, because the reasoning is not recoverable from the code alone:
+# both coefficients used to be held fixed, and injection-recovery showed that
+# was the dominant error in the recovered depth -- refitting identical light
+# curves with the TRUE coefficients cut the median depth error from 6.19% to
+# 0.70%. With u fixed the posterior captured only the ~1.35% statistical
+# scatter and none of that ~6% systematic, so quoted depth uncertainties came
+# out ~4x too narrow (robust pull sigma 4.01 against an ideal of 1.0).
 #
-# u1 is therefore sampled under a Gaussian prior and u2 held fixed: the two are
-# strongly correlated with each other, so sampling one carries most of the
-# uncertainty while avoiding a degenerate second free parameter.
-U_PRIOR_MEAN = 0.4
-U_PRIOR_SIGMA = 0.15
-U2_FIXED = 0.2
+# The first fix freed u1 under a Gaussian prior but left u2 fixed, which
+# recovered most but not all of the missing width -- depth errors measured 1.5x
+# too narrow afterwards. Freeing u2 is the remaining piece.
+#
+# Sampling (u1, u2) directly is what makes that awkward: they are strongly
+# degenerate at light-curve S/N, and large parts of the (u1, u2) plane are
+# unphysical (negative surface brightness, or brightness rising toward the
+# limb). An independent uninformative prior on each therefore lets the sampler
+# wander into combinations no real star can have.
+#
+# Kipping's reparameterisation removes the problem by construction rather than
+# by rejection:
+#
+#     u1 = 2*sqrt(q1)*q2          q1 = (u1 + u2)^2
+#     u2 = sqrt(q1)*(1 - 2*q2)    q2 = u1 / (2*(u1 + u2))
+#
+# q1, q2 in the unit square maps exactly onto the physically valid triangle
+# (u1 + u2 < 1, u1 > 0, u1 + 2*u2 > 0) -- uniformly, with no Jacobian
+# distortion. Every proposal the sampler makes is physical, so no proposals are
+# wasted and the walkers cannot stick against a constraint boundary.
+#
+# sqrt(q1) is exactly the total coefficient sum u1 + u2, which is the
+# combination light curves actually constrain (the ratio q2 is nearly
+# unconstrained at this S/N). A moderately-informative Gaussian on that sum
+# keeps the fit anchored near real stellar values while leaving the degenerate
+# direction free to carry its uncertainty into the depth -- which is the entire
+# point of the exercise.
+U_SUM_PRIOR_MEAN = 0.6          # u1 + u2 for a Sun-like host (was 0.4 + 0.2)
+U_SUM_PRIOR_SIGMA = 0.2
 
-# Kept for callers that need a representative pair for plotting a model curve.
-U_FIXED = (U_PRIOR_MEAN, U2_FIXED)
+# Kept for callers needing a representative pair without a fit in hand.
+U_FIXED = (0.4, 0.2)
 
-PARAM_NAMES = ["t0", "period", "rp", "aRs", "b", "u1"]
+PARAM_NAMES = ["t0", "period", "rp", "aRs", "b", "q1", "q2"]
+
+
+def q_to_u(q1: float, q2: float) -> tuple[float, float]:
+    """Kipping (2013) triangular sampling -> quadratic coefficients (u1, u2)."""
+    r = np.sqrt(np.clip(q1, 0.0, 1.0))
+    return 2.0 * r * q2, r * (1.0 - 2.0 * q2)
+
+
+def u_to_q(u1: float, u2: float) -> tuple[float, float]:
+    """Inverse of `q_to_u`, for seeding the sampler from a (u1, u2) guess."""
+    s = u1 + u2
+    if s <= 0:
+        return 0.0, 0.5
+    return s * s, u1 / (2.0 * s)
 
 
 @dataclass
@@ -54,6 +92,8 @@ class FitResult:
     rp_err: float
     aRs: float
     b: float
+    u1: float              # quadratic limb darkening, fitted not assumed
+    u2: float
     chi2_red: float
     beta_red_noise: float
     converged: bool
@@ -86,13 +126,15 @@ class FitResult:
             "chi2_reduced": self.chi2_red,
             "beta_red_noise": self.beta_red_noise,
             "converged": self.converged,
+            "u1": self.u1,
+            "u2": self.u2,
             "parameters_reliable": self.reliable,
         }
 
 
 def _model(theta, t):
-    t0, period, rp, aRs, b, u1 = theta
-    return transit_model(t, period, t0, rp, aRs, b, (u1, U2_FIXED))
+    t0, period, rp, aRs, b, q1, q2 = theta
+    return transit_model(t, period, t0, rp, aRs, b, q_to_u(q1, q2))
 
 
 def red_noise_beta(time, residuals, duration, max_beta: float = 10.0) -> float:
@@ -181,10 +223,13 @@ def fit_transit(time, flux, flux_err, det, run_mcmc=True,
 
     # seed a/R* from the observed duration, assuming a central transit
     aRs0 = float(np.clip(P0 / (np.pi * dur0), 2.0, 200.0))
-    theta0 = [t00, P0, rp0, aRs0, 0.3, U_PRIOR_MEAN]
+    q1_0, q2_0 = u_to_q(*U_FIXED)
+    theta0 = [t00, P0, rp0, aRs0, 0.3, q1_0, q2_0]
 
-    lo = [t00 - dur0, P0 * 0.98, 1e-3, 1.5, 0.0, 0.0]
-    hi = [t00 + dur0, P0 * 1.02, 0.6, 300.0, 1.0, 1.0]
+    # q1, q2 are bounded to the unit square, which IS the physical region --
+    # so unlike a raw (u1, u2) box these bounds exclude nothing real.
+    lo = [t00 - dur0, P0 * 0.98, 1e-3, 1.5, 0.0, 0.0, 0.0]
+    hi = [t00 + dur0, P0 * 1.02, 0.6, 300.0, 1.0, 1.0, 1.0]
     theta0 = [float(np.clip(v, l, h)) for v, l, h in zip(theta0, lo, hi)]
 
     converged = True
@@ -230,7 +275,8 @@ def fit_transit(time, flux, flux_err, det, run_mcmc=True,
                 depth_obs = float(np.median(obs_samp))
                 depth_obs_err = float(np.std(obs_samp) * beta)
 
-    t0f, Pf, rpf, aRsf, bf, u1f = best
+    t0f, Pf, rpf, aRsf, bf, q1f, q2f = best
+    u1f, u2f = q_to_u(q1f, q2f)
     duration = transit_duration(Pf, rpf, aRsf, bf)
 
     return FitResult(
@@ -241,6 +287,7 @@ def fit_transit(time, flux, flux_err, det, run_mcmc=True,
         duration=float(duration), duration_err=duration_err,
         rp=float(rpf), rp_err=errs["rp"],
         aRs=float(aRsf), b=float(bf),
+        u1=float(u1f), u2=float(u2f),
         chi2_red=chi2_red, beta_red_noise=float(beta),
         converged=converged, samples=samples,
     )
@@ -261,15 +308,24 @@ def _run_mcmc(t, f, e, best, lo, hi, n_walkers, n_steps, n_burn, seed):
             return -np.inf
         if not np.all(np.isfinite(resid)):
             return -np.inf
-        # Gaussian prior on u1: unconstrained limb darkening is degenerate with
-        # impact parameter, but fixing it hides a systematic larger than the
-        # statistical error.
-        lp = -0.5 * ((theta[5] - U_PRIOR_MEAN) / U_PRIOR_SIGMA) ** 2
+        # Moderately-informative Gaussian on the coefficient sum u1 + u2
+        # (= sqrt(q1)); q2 stays uniform on [0, 1]. Limb darkening is degenerate
+        # with impact parameter, so it needs *some* anchoring -- but fixing it
+        # hides a systematic larger than the statistical error, which is the
+        # bug this replaces. Constraining only the well-measured direction
+        # anchors the fit without suppressing the uncertainty it should carry.
+        u_sum = np.sqrt(max(theta[5], 0.0))
+        lp = -0.5 * ((u_sum - U_SUM_PRIOR_MEAN) / U_SUM_PRIOR_SIGMA) ** 2
         return lp - 0.5 * float(np.sum(resid ** 2))
 
     rng = np.random.default_rng(seed)
     ndim = len(best)
+    # Relative scatter alone collapses for parameters whose best-fit value sits
+    # near zero -- q1 and q2 both can -- leaving those walkers initialised
+    # identically and the dimension unexplored. Give the two LD parameters an
+    # absolute spread instead.
     scatter = np.maximum(np.abs(best) * 1e-4, 1e-6)
+    scatter[5:7] = 1e-2
     p0 = best + scatter * rng.normal(size=(n_walkers, ndim))
     p0 = np.clip(p0, lo + 1e-9, hi - 1e-9)
 

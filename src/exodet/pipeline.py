@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 from .classify import explain, predict_one
-from .config import SDE_THRESHOLD, TRANSIT, BLEND
+from .config import SDE_THRESHOLD, TRANSIT, ECLIPSE, BLEND
 from .features import extract_features
 from .fit import fit_transit
 from .preprocess import in_transit_mask, prepare
@@ -41,6 +41,10 @@ class Result:
     periods: np.ndarray | None = None
     power: np.ndarray | None = None
     message: str = ""
+    # Set by _cross_check: the classifier and the fit disagree about whether
+    # there is really an eclipsing signal here.
+    caution_flag: bool = False
+    caution_reason: str | None = None
 
     def summary_lines(self) -> list[str]:
         if not self.detected:
@@ -51,6 +55,8 @@ class Result:
         if self.label is not None and self.confidence is not None:
             out.append(f"Classification : {self.label}  "
                        f"(confidence {self.confidence:.1%})")
+            if self.caution_flag:
+                out.append(f"  CAUTION: {self.caution_reason}")
         else:
             out.append("Classification : (no classifier loaded)")
         out += [
@@ -148,12 +154,61 @@ def analyze(time, flux, flux_err=None, model=None, calibrator=None,
         result.probabilities = pred["probabilities"]
         result.drivers = explain(model, result.features)
 
-    # Fit a transit model when the signal is transit-like.  Blends get fitted
-    # too: the depth is still measurable, it just refers to a diluted source.
-    if do_fit and (model is None or result.label in (TRANSIT, BLEND)):
+    # Fit a model whenever the signal is eclipse-like in the broad sense.
+    # Blends get fitted because the depth is still measurable, it just refers
+    # to a diluted source; eclipses get fitted because their depth and duration
+    # are real measurements too, and -- less obviously -- because the fit's
+    # reduced chi-square is the ONLY evidence the pipeline has that a confident
+    # classification might be wrong. Skipping the fit for eclipses meant the
+    # class most often assigned to spotted stars was also the one class with no
+    # reliability check attached, which is exactly how AU Mic b shipped a
+    # confident "eclipse" label with nothing contradicting it.
+    if do_fit and (model is None or result.label in (TRANSIT, ECLIPSE, BLEND)):
         result.fit = fit_transit(t, f, e, det, run_mcmc=run_mcmc)
 
+    result.caution_flag, result.caution_reason = _cross_check(result)
     return result
+
+
+# Classes whose label asserts a specific geometric event, and so can be
+# contradicted by a fit that does not describe the data. "variable" makes no
+# such claim -- a poor transit fit is consistent with it, not evidence against
+# it -- so flagging it would be noise.
+_GEOMETRIC = (TRANSIT, ECLIPSE, BLEND)
+
+
+def _cross_check(result: "Result") -> tuple[bool, str | None]:
+    """Reconcile the classifier's verdict against the fit's reliability.
+
+    classify.py and fit.py reach their conclusions independently, which is
+    deliberate -- a fit that agreed with the classifier by construction could
+    not contradict it. But independent verdicts were also being *reported*
+    independently, so a confident label and a fit saying "this model does not
+    describe the data" would sit in the same response with nothing connecting
+    them, and a reader would see only the label.
+
+    AU Mic b is the worked example: a young star whose starspot amplitude is
+    19x its transit depth. The classifier calls it "eclipse" with high
+    confidence, the fit correctly reports reduced chi-square 16.9, and the
+    output showed the label. The disagreement between the two subsystems is
+    itself the finding, so it is now surfaced rather than left for the reader
+    to notice.
+    """
+    if result.label not in _GEOMETRIC:
+        return False, None
+    fit = result.fit
+    if fit is None or not fit.converged or not np.isfinite(fit.chi2_red):
+        return False, None
+    if fit.reliable:
+        return False, None
+    return True, (
+        f"fit quality poor (reduced chi-square = {fit.chi2_red:.1f}, above the "
+        f"{fit.CHI2_RELIABLE_MAX:.0f} reliability threshold) while the "
+        f"classifier reports '{result.label}'"
+        + (f" at {result.confidence:.0%} confidence" if result.confidence else "")
+        + " -- the classification may be driven by non-transit stellar "
+          "variability rather than a genuine eclipsing signal, and the fitted "
+          "parameters should not be trusted")
 
 
 def phase_view(result: Result, n_bins: int = 200):

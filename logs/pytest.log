@@ -1,0 +1,28 @@
+................................................................F...     [100%]
+=================================== FAILURES ===================================
+__________________ test_fit_reliability_flag_catches_bad_fits __________________
+
+    def test_fit_reliability_flag_catches_bad_fits():
+        """chi2_red must separate trustworthy fits from contaminated ones."""
+        from exodet.fit import FitResult
+>       good = FitResult(period=1, period_err=0, t0=0, t0_err=0, depth=0,
+                         depth_err=0, depth_obs=0, depth_obs_err=0, duration=0,
+                         duration_err=0, rp=0, rp_err=0, aRs=10, b=0,
+                         chi2_red=1.7, beta_red_noise=1.0, converged=True)
+E       TypeError: FitResult.__init__() missing 2 required positional arguments: 'u1' and 'u2'
+
+tests/test_pipeline.py:179: TypeError
+=============================== warnings summary ===============================
+tests/test_api.py::test_health
+tests/test_api.py::test_health
+tests/test_api.py::test_health
+tests/test_api.py::test_health
+tests/test_api.py::test_health
+  /Users/sameetvipat/Developer/sih2026/.venv/lib/python3.12/site-packages/joblib/numpy_pickle.py:207: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    array.shape = self.shape
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_pipeline.py::test_fit_reliability_flag_catches_bad_fits - T...
+1 failed, 67 passed, 5 warnings in 269.24s (0:04:29)

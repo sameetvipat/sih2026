@@ -93,6 +93,12 @@ class AnalyzeResponse(BaseModel):
     features: dict[str, float] | None = None
     series: Series | None = None
     detrend_method: str = "biweight"
+    # Raised when the classifier's label and the fit's reliability disagree.
+    # Kept at the top level rather than inside `classification` or `fit`,
+    # because it is a statement about the two of them together and belongs to
+    # neither on its own.
+    caution_flag: bool = False
+    caution_reason: str | None = None
     elapsed_seconds: float = 0.0
     cached: bool = False
 
