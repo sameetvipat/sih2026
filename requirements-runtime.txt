@@ -18,8 +18,13 @@ pandas>=2.1
 astropy>=6.0             # BoxLeastSquares, LombScargle
 wotan>=1.10              # transit-safe detrending (pulls numba + llvmlite)
 batman-package>=2.4.9    # Mandel-Agol analytic transit model, compiled from C
-lightkurve>=2.4          # TESS light curve I/O
-astroquery>=0.4.7        # MAST search behind lightkurve; needed by TIC fetch
+requests>=2.31           # MAST search and download; see exodet.mast
+#
+# lightkurve and astroquery are deliberately absent. They do the same job, but
+# bring bokeh, matplotlib, PIL, fontTools, botocore and pyvo with them -- about
+# 137 MB of image for one button. exodet.mast reaches the same two MAST
+# endpoints with requests and reads the FITS with astropy, which is already
+# here. scripts/ still use lightkurve, so it stays in requirements.txt.
 
 # --- machine learning ---
 scikit-learn>=1.4

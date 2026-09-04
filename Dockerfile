@@ -21,13 +21,21 @@ WORKDIR /app
 # Dependencies before source, so editing the app does not reinstall ~400 MB of
 # scientific Python. Build toolchain is added and removed inside one layer so
 # it never reaches the final image.
+# scipy, astropy and pandas each ship their own test suites inside the installed
+# package -- ~91 MB that is never imported at runtime. The final find calls
+# strip those, the bytecode caches and the type stubs. Image size is what a
+# scale-from-zero cold start has to pull, so this is not just tidiness.
 COPY requirements-runtime.txt .
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc g++ \
  && pip install --no-cache-dir --upgrade pip setuptools \
  && pip install --no-cache-dir -r requirements-runtime.txt \
  && apt-get purge -y --auto-remove gcc g++ \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && find /usr/local/lib/python3.12/site-packages \
+      \( -type d -name tests -o -type d -name test -o -type d -name __pycache__ \) \
+      -prune -exec rm -rf {} + \
+ && find /usr/local/lib/python3.12/site-packages -name "*.pyi" -delete
 
 # Only what the service reads at runtime. scripts/, tests/, the training
 # tables and the 47 MB baseline bank are excluded by .dockerignore.
@@ -37,14 +45,14 @@ COPY web/                   ./web/
 COPY models/classifier.joblib ./models/
 COPY data/cache/TIC_*.npz   ./data/cache/
 
-# Hugging Face Spaces runs as UID 1000 and expects the app on 7860. astropy,
-# lightkurve and matplotlib all want a writable HOME for their caches; without
-# one, astroquery raises rather than warns on the first MAST search.
+# Run unprivileged. UID 1000 and port 7860 are what Hugging Face Spaces expects;
+# other hosts override the port through $PORT. astropy writes a config and cache
+# directory on first use, so HOME must be writable -- a read-only HOME turns the
+# first MAST fetch into an error rather than a warning.
 RUN useradd -m -u 1000 user && chown -R user:user /app
 USER user
 ENV HOME=/home/user \
     PYTHONUNBUFFERED=1 \
-    MPLCONFIGDIR=/home/user/.cache/matplotlib \
     PORT=7860
 
 EXPOSE 7860

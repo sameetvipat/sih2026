@@ -268,21 +268,16 @@ def _run(req: AnalyzeRequest) -> AnalyzeResponse:
         pub = PUBLISHED.get(tic, {})
         ident, name, source = tic, pub.get("name", tic), "cached"
     elif req.tic:
-        import lightkurve as lk
-        query = req.tic if req.tic.upper().startswith("TIC") else f"TIC {req.tic}"
+        # A direct MAST client rather than lightkurve: same file, same
+        # cadences, ~137 MB less to deploy. See exodet.mast.
+        from exodet import mast
+        query = f"TIC {mast.normalise_tic(req.tic)}"
         try:
-            q = lk.search_lightcurve(query, mission="TESS", author="SPOC",
-                                     exptime=120)
-            if len(q) == 0:
-                raise HTTPException(404, f"no SPOC 2-minute TESS data for {query}")
-            lc = q[0].download().remove_nans()
-        except HTTPException:
-            raise
+            t, f, e, _sector = mast.fetch_lightcurve(req.tic)
+        except mast.NoDataError as exc:
+            raise HTTPException(404, str(exc))
         except Exception as exc:
             raise HTTPException(502, f"MAST download failed: {exc}")
-        t = np.asarray(lc.time.value, float)
-        f = np.asarray(lc.flux.value, float)
-        e = np.asarray(lc.flux_err.value, float)
         pub = PUBLISHED.get(query, {})
         ident, name, source = query, pub.get("name", query), "mast"
     else:
