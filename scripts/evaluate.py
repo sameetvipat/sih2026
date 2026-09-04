@@ -28,7 +28,6 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from exodet.config import TRANSIT                    # noqa: E402
-from exodet.features import extract_features         # noqa: E402
 from exodet.fit import fit_transit                   # noqa: E402
 from exodet.preprocess import prepare                # noqa: E402
 from exodet.search import run_bls                    # noqa: E402

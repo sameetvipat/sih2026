@@ -14,10 +14,16 @@ from astropy.timeseries import BoxLeastSquares
 from .config import MAX_PERIOD, MIN_PERIOD, SDE_THRESHOLD
 
 # trial transit durations, in days (~45 min to ~6 h)
+# --------------------------------------------------------------------------- #
+# Search grid
+# --------------------------------------------------------------------------- #
 DURATION_GRID = np.array([0.03, 0.05, 0.08, 0.12, 0.18, 0.25])
 
 
 @dataclass
+# --------------------------------------------------------------------------- #
+# Result container
+# --------------------------------------------------------------------------- #
 class Detection:
     """Best periodic dip found by BLS, with its significance."""
     period: float
@@ -34,6 +40,9 @@ class Detection:
         return asdict(self)
 
 
+# --------------------------------------------------------------------------- #
+# Binning and significance
+# --------------------------------------------------------------------------- #
 def _sde(power: np.ndarray) -> float:
     """Signal Detection Efficiency: peak height above the periodogram floor."""
     power = power[np.isfinite(power)]
@@ -63,6 +72,9 @@ def bin_lightcurve(time, flux, flux_err=None, minutes=10.0):
     return tb, fb, eb
 
 
+# --------------------------------------------------------------------------- #
+# BLS period search
+# --------------------------------------------------------------------------- #
 def run_bls(time, flux, flux_err=None,
             min_period=MIN_PERIOD, max_period=MAX_PERIOD,
             duration_grid=DURATION_GRID, oversample=5, bin_minutes=10.0):
@@ -112,6 +124,9 @@ def run_bls(time, flux, flux_err=None,
     return det, np.asarray(power.period), np.asarray(power.power)
 
 
+# --------------------------------------------------------------------------- #
+# Phase folding
+# --------------------------------------------------------------------------- #
 def fold(time, flux, period, t0):
     """Phase-fold onto [-0.5, 0.5) in units of period, sorted by phase."""
     phase = ((time - t0 + 0.5 * period) % period) / period - 0.5

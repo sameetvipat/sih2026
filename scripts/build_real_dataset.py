@@ -103,7 +103,6 @@ def main():
         # burns time to reach the same verdict. A network failure is not
         # settled, and must stay in the queue or a transient outage silently
         # becomes a permanent hole in the dataset.
-        errs = done["error"] if "error" in done else pd.Series(dtype=object)
         settled = done["error"].isna() | done["error"].fillna("").str.startswith(
             "no detection") if "error" in done else pd.Series(True, index=done.index)
         attempted = set(done.loc[settled, "target"])

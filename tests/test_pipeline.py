@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from exodet.config import BLEND, ECLIPSE, NOISE, TRANSIT, VARIABLE
 from exodet.features import fit_trapezoid, implied_density, odd_even_test
 from exodet.preprocess import in_transit_mask, prepare
-from exodet.search import bin_lightcurve, fold, run_bls
+from exodet.search import fold, run_bls
 from exodet.simulate import (a_over_rs, generate_sample, make_time_grid,
                              transit_duration, transit_model)
 

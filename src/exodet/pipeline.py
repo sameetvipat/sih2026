@@ -17,10 +17,13 @@ from .config import SDE_THRESHOLD, TRANSIT, ECLIPSE, BLEND
 from .features import extract_features
 from .fit import fit_transit
 from .preprocess import in_transit_mask, prepare
-from .search import Detection, bin_lightcurve, fold, run_bls
+from .search import Detection, run_bls
 
 
 @dataclass
+# --------------------------------------------------------------------------- #
+# Result container
+# --------------------------------------------------------------------------- #
 class Result:
     """Everything the pipeline learned about one light curve."""
     detected: bool
@@ -98,6 +101,9 @@ class Result:
         return out
 
 
+# --------------------------------------------------------------------------- #
+# End-to-end analysis
+# --------------------------------------------------------------------------- #
 def analyze(time, flux, flux_err=None, model=None, calibrator=None,
             do_fit=True, run_mcmc=True, iterate_detrend=True,
             detrend_methods=("biweight",)) -> Result:
@@ -188,6 +194,9 @@ def analyze(time, flux, flux_err=None, model=None, calibrator=None,
     return result
 
 
+# --------------------------------------------------------------------------- #
+# Multiple-trials correction
+# --------------------------------------------------------------------------- #
 def look_elsewhere_sde(sde: float, n_trials: int) -> float:
     """Discount an SDE for the number of detrenders the search chose between.
 
@@ -240,6 +249,9 @@ def look_elsewhere_sde(sde: float, n_trials: int) -> float:
 _GEOMETRIC = (TRANSIT, ECLIPSE, BLEND)
 
 
+# --------------------------------------------------------------------------- #
+# Classifier / fit cross-check
+# --------------------------------------------------------------------------- #
 def _cross_check(result: "Result") -> tuple[bool, str | None]:
     """Reconcile the classifier's verdict against the fit's reliability.
 
@@ -273,11 +285,3 @@ def _cross_check(result: "Result") -> tuple[bool, str | None]:
           "variability rather than a genuine eclipsing signal, and the fitted "
           "parameters should not be trusted")
 
-
-def phase_view(result: Result, n_bins: int = 200):
-    """Folded light curve plus binned means, for plotting."""
-    from .search import bin_phase
-    d = result.detection
-    phase, f = fold(result.time, result.flux, d.period, d.t0)
-    centres, means, errs = bin_phase(phase, f, n_bins)
-    return phase, f, centres, means, errs

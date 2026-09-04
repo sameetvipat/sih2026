@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from api.main import app  # noqa: E402
+from exodet.features import FEATURE_NAMES  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -26,7 +27,7 @@ def test_health(client):
     assert r.status_code == 200
     d = r.json()
     assert d["status"] == "ok"
-    assert d["n_features"] == 22
+    assert d["n_features"] == len(FEATURE_NAMES)
     assert len(d["classes"]) == 5
 
 
@@ -73,7 +74,7 @@ def test_analyze_simulated_transit_round_trip(client):
         assert len(s[key]["x"]) > 0, f"series.{key} is empty"
         assert len(s[key]["x"]) == len(s[key]["y"]), f"series.{key} x/y length mismatch"
 
-    assert len(d["features"]) == 22
+    assert len(d["features"]) == len(FEATURE_NAMES)
     assert all(isinstance(v, (int, float)) for v in d["features"].values())
 
 

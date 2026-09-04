@@ -18,6 +18,9 @@ from sklearn.metrics import (accuracy_score, classification_report,
                              confusion_matrix, f1_score)
 
 
+# --------------------------------------------------------------------------- #
+# Confidence intervals
+# --------------------------------------------------------------------------- #
 def wilson_interval(correct: int, n: int, conf: float = 0.95):
     """Wilson score interval: better than the normal approximation at small n."""
     if n == 0:
@@ -31,6 +34,9 @@ def wilson_interval(correct: int, n: int, conf: float = 0.95):
     return float(centre - half), float(centre + half)
 
 
+# --------------------------------------------------------------------------- #
+# Reporting
+# --------------------------------------------------------------------------- #
 def report(y_true, y_pred, classes, title: str = "", show_confusion: bool = True):
     """Print the standard block and return the headline numbers."""
     y_true, y_pred = np.asarray(y_true), np.asarray(y_pred)

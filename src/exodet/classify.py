@@ -28,6 +28,9 @@ from .config import CLASSES
 from .features import FEATURE_NAMES
 
 
+# --------------------------------------------------------------------------- #
+# Training report
+# --------------------------------------------------------------------------- #
 @dataclass
 class TrainReport:
     accuracy: float
@@ -39,6 +42,9 @@ class TrainReport:
     importances: pd.Series
 
 
+# --------------------------------------------------------------------------- #
+# Probability calibration
+# --------------------------------------------------------------------------- #
 def _clean(X: pd.DataFrame) -> pd.DataFrame:
     """Replace non-finite values -- trees handle NaN, but keep it explicit."""
     return X.replace([np.inf, -np.inf], np.nan)
@@ -91,6 +97,9 @@ def _best_calibrator(model, X_cal, y_cal, seed):
         return None
 
 
+# --------------------------------------------------------------------------- #
+# Training
+# --------------------------------------------------------------------------- #
 def train(df: pd.DataFrame, seed: int = 0, calibrate: bool = True):
     """Train the classifier. Returns (model, calibrator, TrainReport)."""
     import lightgbm as lgb
@@ -152,6 +161,9 @@ def train(df: pd.DataFrame, seed: int = 0, calibrate: bool = True):
     return model, calibrator, rep, (X_te, y_te, proba)
 
 
+# --------------------------------------------------------------------------- #
+# Inference
+# --------------------------------------------------------------------------- #
 def predict_one(model, calibrator, features: dict) -> dict:
     """Classify a single feature dict. Returns label + full probability vector."""
     X = _clean(pd.DataFrame([features])[FEATURE_NAMES])
@@ -183,6 +195,9 @@ def explain(model, features: dict, top_n: int = 4) -> list[tuple[str, float]]:
         return [(k, float(v)) for k, v in imp.nlargest(top_n).items()]
 
 
+# --------------------------------------------------------------------------- #
+# Persistence
+# --------------------------------------------------------------------------- #
 def save(model, calibrator, rep: TrainReport, outdir="models"):
     import joblib
     os.makedirs(outdir, exist_ok=True)

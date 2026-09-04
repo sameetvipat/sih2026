@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
 .ipynb_checkpoints/
 
 # --- intermediate dataset shards -------------------------------------------
@@ -12,12 +13,18 @@ __pycache__/
 # rows, so committing both would duplicate the data.
 data/processed/shards/
 data/processed/real_shards/
+data/baselines/_shards_kepler/
 *.parquet.tmp
 
 # --- caches ---
 .DS_Store
 reports/*.png
 reports/*.csv
+
+# --- run artifacts ---
+# Logs are written by start.sh and the long dataset builds. They are output,
+# not input: nothing reads them back.
+logs/*.log
 
 # --- committed on purpose (do NOT ignore) -----------------------------------
 # data/cache/*.npz          real light curves, so the demo runs offline

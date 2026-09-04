@@ -52,7 +52,6 @@ def candidate_targets(mission: str, n_per_bin: int, seed: int,
                       exclude: set[str]) -> pd.DataFrame:
     """Sample stars stratified by brightness, excluding known-signal targets."""
     from astroquery.ipac.nexsci.nasa_exoplanet_archive import NasaExoplanetArchive as NEA
-    rng = np.random.default_rng(seed)
 
     if mission == "kepler":
         df = NEA.query_criteria(table="q1_q17_dr25_stellar",

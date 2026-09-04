@@ -6,6 +6,9 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+# --------------------------------------------------------------------------- #
+# Request
+# --------------------------------------------------------------------------- #
 class AnalyzeRequest(BaseModel):
     """One of `tic`, `cached` or `simulate` selects the data source."""
     tic: str | None = Field(None, description="TIC ID to download from MAST, e.g. '261136679'")
@@ -17,6 +20,9 @@ class AnalyzeRequest(BaseModel):
     multi_detrend: bool = Field(True, description="Try biweight and lowess, keep the higher SDE")
 
 
+# --------------------------------------------------------------------------- #
+# Response components
+# --------------------------------------------------------------------------- #
 class TargetInfo(BaseModel):
     id: str
     name: str
@@ -64,6 +70,9 @@ class Fit(BaseModel):
     warning: str | None = None
 
 
+# --------------------------------------------------------------------------- #
+# Series payloads
+# --------------------------------------------------------------------------- #
 class XY(BaseModel):
     x: list[float]
     y: list[float]
@@ -83,6 +92,9 @@ class Series(BaseModel):
     even: XY | None = None
 
 
+# --------------------------------------------------------------------------- #
+# Top-level responses
+# --------------------------------------------------------------------------- #
 class AnalyzeResponse(BaseModel):
     target: TargetInfo
     detected: bool

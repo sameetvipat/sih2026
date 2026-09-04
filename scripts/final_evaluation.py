@@ -24,13 +24,11 @@ import sys
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
-from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from exodet.features import FEATURE_NAMES            # noqa: E402
-from exodet.metrics import report, wilson_interval    # noqa: E402
+from exodet.metrics import report    # noqa: E402
 
 SHARED = ["transit", "eclipse", "blend", "variable"]
 

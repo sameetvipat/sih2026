@@ -13,6 +13,9 @@ from wotan import flatten
 from .config import DETREND_WINDOW_DAYS
 
 
+# --------------------------------------------------------------------------- #
+# Normalisation and outlier rejection
+# --------------------------------------------------------------------------- #
 def normalize(flux: np.ndarray, flux_err: np.ndarray | None = None):
     """Divide by the median so flux sits about 1.0."""
     med = np.nanmedian(flux)
@@ -48,6 +51,9 @@ def clip_outliers(time, flux, flux_err=None, upper=4.0, lower=None):
     return out + ((flux_err[keep],) if flux_err is not None else (None,))
 
 
+# --------------------------------------------------------------------------- #
+# Detrending
+# --------------------------------------------------------------------------- #
 def detrend(time, flux, window_days=DETREND_WINDOW_DAYS, mask=None,
             method="biweight"):
     """Remove stellar variability / systematics with a sliding filter.
@@ -88,6 +94,9 @@ def detrend(time, flux, window_days=DETREND_WINDOW_DAYS, mask=None,
     return flat_full, trend
 
 
+# --------------------------------------------------------------------------- #
+# Transit masking
+# --------------------------------------------------------------------------- #
 def in_transit_mask(time, period, t0, duration, n_durations=1.5):
     """Boolean mask of points within +/- n_durations/2 of any transit centre."""
     if not np.isfinite(period) or period <= 0 or not np.isfinite(duration):
@@ -96,6 +105,9 @@ def in_transit_mask(time, period, t0, duration, n_durations=1.5):
     return np.abs(phase) < (n_durations * duration / 2.0)
 
 
+# --------------------------------------------------------------------------- #
+# Entry point
+# --------------------------------------------------------------------------- #
 def prepare(time, flux, flux_err=None, window_days=DETREND_WINDOW_DAYS,
             method="biweight"):
     """Full clean: finite -> normalise -> clip -> detrend. Returns arrays."""

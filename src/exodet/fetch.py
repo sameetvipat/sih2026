@@ -42,7 +42,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Iterable, Sequence
+from typing import Callable, Sequence
 
 import numpy as np
 import pandas as pd

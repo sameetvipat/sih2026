@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.optimize import least_squares
 
-from .simulate import a_over_rs, transit_duration, transit_model
+from .simulate import transit_duration, transit_model
 
 # Quadratic limb darkening, sampled in the Kipping (2013) (q1, q2) basis.
 #
@@ -61,6 +61,9 @@ U_FIXED = (0.4, 0.2)
 PARAM_NAMES = ["t0", "period", "rp", "aRs", "b", "q1", "q2"]
 
 
+# --------------------------------------------------------------------------- #
+# Limb-darkening parameterisation
+# --------------------------------------------------------------------------- #
 def q_to_u(q1: float, q2: float) -> tuple[float, float]:
     """Kipping (2013) triangular sampling -> quadratic coefficients (u1, u2)."""
     r = np.sqrt(np.clip(q1, 0.0, 1.0))
@@ -76,6 +79,9 @@ def u_to_q(u1: float, u2: float) -> tuple[float, float]:
 
 
 @dataclass
+# --------------------------------------------------------------------------- #
+# Result container
+# --------------------------------------------------------------------------- #
 class FitResult:
     """Best-fit transit parameters with 68% credible intervals."""
     period: float
@@ -132,6 +138,9 @@ class FitResult:
         }
 
 
+# --------------------------------------------------------------------------- #
+# Noise and depth diagnostics
+# --------------------------------------------------------------------------- #
 def _model(theta, t):
     t0, period, rp, aRs, b, q1, q2 = theta
     return transit_model(t, period, t0, rp, aRs, b, q_to_u(q1, q2))
@@ -199,6 +208,9 @@ def observed_depth(theta) -> float:
         return float(rp ** 2)
 
 
+# --------------------------------------------------------------------------- #
+# Least-squares fit
+# --------------------------------------------------------------------------- #
 def _window(time, flux, flux_err, period, t0, duration, n_dur=4.0):
     """Keep only points near transit -- fitting is far faster and no less valid."""
     phase = (time - t0 + 0.5 * period) % period - 0.5 * period
@@ -293,6 +305,9 @@ def fit_transit(time, flux, flux_err, det, run_mcmc=True,
     )
 
 
+# --------------------------------------------------------------------------- #
+# Posterior sampling
+# --------------------------------------------------------------------------- #
 def _run_mcmc(t, f, e, best, lo, hi, n_walkers, n_steps, n_burn, seed):
     """Sample the posterior with emcee; uniform priors inside the bounds."""
     import emcee

@@ -29,7 +29,7 @@ import sys
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, classification_report, f1_score
+from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import train_test_split
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
