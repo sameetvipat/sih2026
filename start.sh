@@ -58,6 +58,9 @@ NLC=$(ls data/cache/TIC_*.npz 2>/dev/null | wc -l | tr -d ' ')
 [ "$NLC" -ge 3 ] && ok "$NLC demo light curves cached (no network needed)" \
                  || warn "only $NLC cached light curves — demo targets may need the internet"
 [ -f web/vendor/plotly.min.js ] && ok "plotly vendored locally" || warn "plotly missing — charts will not render"
+NFONT=$(ls web/vendor/fonts/*.woff2 2>/dev/null | wc -l | tr -d ' ')
+[ "$NFONT" -ge 6 ] && ok "$NFONT webfonts vendored locally" \
+                   || warn "only $NFONT/6 webfonts vendored — the UI falls back to system faces"
 
 # ── 4. free the port ────────────────────────────────────────────────────────
 if lsof -ti tcp:8000 >/dev/null 2>&1; then

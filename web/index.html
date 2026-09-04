@@ -3,52 +3,85 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Exoplanet Transit Detection</title>
+<meta name="color-scheme" content="dark">
+<title>Transit Console</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/vendor/plotly.min.js"></script>
 </head>
 <body>
 
 <header>
-  <h1>Exoplanet Transit Detection</h1>
-  <span class="sub">BLS search &rarr; vetting features &rarr; calibrated classifier &rarr; transit fit</span>
+  <button class="menubtn" id="menuBtn" aria-label="Show controls" aria-expanded="false">
+    <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+      <path d="M0 1.5h12M0 6h12M0 10.5h12" stroke="currentColor" stroke-width="1.4"/>
+    </svg><span class="mbl">Controls</span>
+  </button>
+
+  <!-- Star with a planet crossing it: the one shape the whole pipeline is
+       about, and the only place the app states its subject without words. -->
+  <svg class="mark" width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
+    <circle cx="15" cy="15" r="9.6" fill="none" stroke="var(--brand)" stroke-width="1" opacity=".4"/>
+    <circle cx="15" cy="15" r="6.3" fill="var(--brand)" opacity=".14"/>
+    <circle cx="15" cy="15" r="6.3" fill="none" stroke="var(--brand)" stroke-width="1.5"/>
+    <circle cx="19.6" cy="12.4" r="2.2" fill="var(--void)" stroke="var(--blend)" stroke-width="1.4"/>
+  </svg>
+
+  <div class="brandblock">
+    <h1>Transit Console</h1>
+    <span class="sub">TESS light-curve vetting</span>
+  </div>
+
+  <div class="stepper" id="stepper" aria-label="Pipeline stages">
+    <b data-stage="detrend">Detrend</b><i></i>
+    <b data-stage="bls">BLS</b><i></i>
+    <b data-stage="features">Features</b><i></i>
+    <b data-stage="classify">Classify</b><i></i>
+    <b data-stage="fit">Fit</b>
+  </div>
+
   <span class="spacer"></span>
   <span class="pill" id="clsPill">checking&hellip;</span>
   <span class="pill" id="warmPill">cache 0</span>
 </header>
 
 <div class="wrap">
-  <aside>
+  <aside id="rail">
     <div class="sec">
       <h2>Real TESS targets</h2>
       <div id="realList"></div>
     </div>
 
     <div class="sec">
-      <h2>Simulated</h2>
+      <h2>Simulated &middot; injected truth</h2>
       <div id="simList"></div>
-      <div class="opt" style="margin-top:8px">
-        <label for="seed" style="color:var(--muted);font-size:12px">seed</label>
-        <input type="text" id="seed" value="42" style="width:70px">
+      <div class="field" style="margin-top:var(--s1)">
+        <label class="label" for="seed" style="align-self:center">seed</label>
+        <input type="text" id="seed" value="42" inputmode="numeric">
       </div>
     </div>
 
     <div class="sec">
       <h2>Download by TIC</h2>
-      <input type="text" id="ticInput" placeholder="e.g. 261136679">
-      <button class="run" id="ticBtn" style="margin-top:8px">Fetch from MAST</button>
+      <div class="field">
+        <input type="text" id="ticInput" placeholder="261136679" aria-label="TIC identifier">
+        <button class="btn-ghost" id="ticBtn">Fetch</button>
+      </div>
     </div>
 
     <div class="sec">
       <h2>Options</h2>
-      <label class="opt"><input type="checkbox" id="mcmc" checked> MCMC uncertainties</label>
-      <label class="opt"><input type="checkbox" id="multi" checked> Try multiple detrenders</label>
-      <button class="run" id="runBtn">Analyse</button>
+      <label class="opt"><span>MCMC uncertainties</span>
+        <input type="checkbox" id="mcmc" checked><span class="sw"></span></label>
+      <label class="opt"><span>Multiple detrenders</span>
+        <input type="checkbox" id="multi" checked><span class="sw"></span></label>
     </div>
+
+    <button class="run" id="runBtn">Analyse</button>
   </aside>
 
-  <main id="main">
-    <div class="empty">Select a target to analyse.</div>
+  <main>
+    <div class="alerts" id="globalAlerts"></div>
+    <div id="result"></div>
   </main>
 </div>
 
