@@ -4,7 +4,7 @@
 
 ## 1. Methodology
 
-`detrend → BLS period search → 22 vetting features → gradient-boosted classifier → transit fit with MCMC`
+`detrend → BLS period search → 23 vetting features → gradient-boosted classifier → transit fit with MCMC`
 
 **Detrending.** `wotan` biweight filter with a window well above any plausible
 transit duration, plus a second pass that masks known transits so the trend
@@ -152,5 +152,5 @@ flux 19× deeper than its transit.
 ## 7. Tools
 
 `lightkurve`, `astropy` (BLS), `astroquery` (KOI/TOI dispositions), `wotan`,
-`batman`, `emcee`, `scikit-learn`, `LightGBM`, `FastAPI`, `Plotly`. 62 tests
+`batman`, `emcee`, `scikit-learn`, `LightGBM`, `FastAPI`, `Plotly`. 77 tests
 cover pipeline invariants, the API contract, dataset resumability and injection.

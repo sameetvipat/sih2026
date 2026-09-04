@@ -1,6 +1,6 @@
 # Session progress — Implementation Directive v2
 
-## Section 0 state check (VERIFIED against live repo, not ref.md)
+## Section 0 state check (VERIFIED against live repo, not docs/ref.md)
 
 Catalogue (`data/labels/targets.csv`, Kepler only after dropping
 false_positive): transit 3181, eclipse 1435, variable 1075, blend 1009.
@@ -111,8 +111,8 @@ Followed the checkpoint's redirect: skipped the secondary Rp/R*, a/R*, b prior
 extension entirely, kept the `u2` fix (independently justified, validated at
 1.24× on Pi Men c), moved on. No further time spent on shape realism.
 
-The pre-fix 90.2% reproduces ref.md exactly. The real-side figure is 55.5%
-rather than ref.md's 49.4% because the real set has grown from 1065 to 1560
+The pre-fix 90.2% reproduces docs/ref.md exactly. The real-side figure is 55.5%
+rather than docs/ref.md's 49.4% because the real set has grown from 1065 to 1560
 usable rows since that measurement; it is a moving reference, not a discrepancy.
 
 **Why it did not move, mechanistically.** `log_rho_implied` is derived from
