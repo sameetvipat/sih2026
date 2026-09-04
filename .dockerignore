@@ -1,0 +1,35 @@
+# The image carries the service and the data it reads at runtime, nothing else.
+.git/
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.py[cod]
+
+# Training and analysis tooling: not imported by the API.
+scripts/
+tests/
+docs/
+reports/
+logs/
+
+# Data the API never opens. data/cache/TIC_*.npz is copied explicitly in the
+# Dockerfile; everything else here is training input or a 47 MB baseline bank.
+data/
+!data/cache/
+data/cache/bulk/
+data/baselines/
+data/processed/
+data/labels/
+
+# The frozen fallback model is a local safety net for start.sh, not for the
+# container, which pins its model at build time.
+models/
+!models/classifier.joblib
+
+*.md
+!README.md
+setup.sh
+start.sh
+stop.sh
+requirements.txt

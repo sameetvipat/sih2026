@@ -1,3 +1,14 @@
+---
+title: Transit Console
+emoji: "🪐"
+colorFrom: yellow
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+short_description: Detect and classify exoplanet transits in TESS light curves
+---
+
 # Exoplanet transit detection from noisy light curves
 
 Finds periodic dips in TESS/Kepler photometry, decides what physically caused
