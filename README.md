@@ -202,8 +202,15 @@ every call via SHAP. A CNN on folded views is the natural Tier-2 extension.
   which one produced the retained detection, with a look-elsewhere discount on
   its significance.
 
+## Deploying
+
+`./deploy/azure.sh` ships it to Azure Container Apps, building the image in the
+cloud so Docker is not needed locally. See [docs/DEPLOY.md](docs/DEPLOY.md) for
+alternatives, costs, and why this cannot run on a serverless function platform.
+
 ## Further reading
 
+- [docs/DEPLOY.md](docs/DEPLOY.md) — hosting options, costs, and the demo-day fallback
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) — how to present the demo, and what to do when it breaks
 - [docs/RESULTS.md](docs/RESULTS.md) — every measurement, the five bugs worth knowing about, and the synthetic-to-real domain gap
 - [docs/DASHBOARD_OUTPUTS_EXPLAINED.md](docs/DASHBOARD_OUTPUTS_EXPLAINED.md) — what every number and plot in the UI means
